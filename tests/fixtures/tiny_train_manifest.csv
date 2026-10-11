@@ -1,0 +1,4 @@
+image_id,question_id,question,answers_json,clean_image_path,degraded_image_path,degradation_type,degradation_level,degradation_parameters_json,seed,clean_sha256,degraded_sha256
+img001,q001,What text?,"[""a"",""a"",""a"",""a"",""a"",""a"",""a"",""a"",""a"",""a""]",old/clean/img001.jpg,old/degraded/img001.png,defocus_blur,L2,"{""radius"":4}",42,cleanhash,degradedhash
+img002,q002,What word?,"[""b"",""b"",""b"",""b"",""b"",""b"",""b"",""b"",""b"",""b""]",old/clean/img002.jpg,old/degraded/img002.png,motion_camera_shake,L2,"{""length"":13}",43,cleanhash2,degradedhash2
+

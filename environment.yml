@@ -1,0 +1,11 @@
+name: textvqa-phase2
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip=25.0
+  - pip:
+      - -r requirements-lock.txt
+

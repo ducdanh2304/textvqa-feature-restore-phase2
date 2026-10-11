@@ -1,0 +1,3 @@
+image_id,question_id,question,answers_json,clean_image_path,degraded_image_path,degradation_type,degradation_level,degradation_parameters_json,seed,clean_sha256,degraded_sha256
+img003,q003,What number?,"[""1"",""1"",""1"",""1"",""1"",""1"",""1"",""1"",""1"",""1""]",old/clean/img003.jpg,old/degraded/img003.png,defocus_blur,L2,"{""radius"":4}",44,cleanhash3,degradedhash3
+

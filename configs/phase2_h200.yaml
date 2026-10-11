@@ -1,0 +1,39 @@
+paths:
+  data_root: /path/to/textvqa_phase2_data
+  output_root: /path/to/textvqa_phase2_output
+
+model:
+  id: Qwen/Qwen2.5-VL-3B-Instruct
+  revision: 66285546d2b821cf421d4f5eb2576359d3770cd3
+  path: null
+  offline: false
+  attention_implementation: sdpa
+  visual_dtype: float32
+  language_dtype: float16
+
+processor:
+  use_fast: false
+  min_pixels: 65536
+  max_pixels: 786432
+
+cache:
+  implementation_version: phase2-cache-v1
+  batch_size: 1
+  storage_dtype: float16
+
+training:
+  batch_size: 16
+  gradient_accumulation: 1
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  gradient_clip_norm: 1.0
+  max_epochs: 20
+  early_stopping_patience: 4
+
+hardware:
+  allow_non_h200: false
+  allow_tf32: false
+
+reproducibility:
+  seed: 42
+
