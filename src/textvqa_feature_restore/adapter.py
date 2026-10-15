@@ -25,6 +25,66 @@ class ResidualFeatureRestorer(nn.Module):
             raise ValueError(f"Expected hidden size {self.hidden_size}, received {feature.shape[-1]}")
         return feature + self.net(feature)
 
+    def delta(self, feature: torch.Tensor) -> torch.Tensor:
+        if feature.shape[-1] != self.hidden_size:
+            raise ValueError(f"Expected hidden size {self.hidden_size}, received {feature.shape[-1]}")
+        return self.net(feature)
+
+
+class GatedFeatureRestorer(nn.Module):
+    """Residual feature restoration with one learned gate per visual token."""
+
+    def __init__(self, hidden_size: int = 2048, bottleneck_dim: int = 256) -> None:
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.bottleneck_dim = int(bottleneck_dim)
+        self.restorer = ResidualFeatureRestorer(hidden_size, bottleneck_dim)
+        self.gate = nn.Sequential(
+            nn.LayerNorm(hidden_size),
+            nn.Linear(hidden_size, bottleneck_dim),
+            nn.GELU(),
+            nn.Linear(bottleneck_dim, 1),
+        )
+        nn.init.zeros_(self.gate[-1].weight)
+        nn.init.constant_(self.gate[-1].bias, -2.0)
+
+    def forward(self, feature: torch.Tensor, *, return_gate: bool = False):
+        delta = self.restorer.delta(feature)
+        gate = torch.sigmoid(self.gate(feature))
+        restored = feature + gate * delta
+        return (restored, gate) if return_gate else restored
+
+
+class QuestionGatedFeatureRestorer(nn.Module):
+    """Per-token gate conditioned on a frozen question embedding."""
+
+    def __init__(self, hidden_size: int = 2048, bottleneck_dim: int = 256) -> None:
+        super().__init__()
+        self.hidden_size = int(hidden_size)
+        self.bottleneck_dim = int(bottleneck_dim)
+        self.restorer = ResidualFeatureRestorer(hidden_size, bottleneck_dim)
+        self.visual = nn.Sequential(nn.LayerNorm(hidden_size), nn.Linear(hidden_size, bottleneck_dim))
+        self.question = nn.Sequential(nn.LayerNorm(hidden_size), nn.Linear(hidden_size, bottleneck_dim))
+        self.gate = nn.Sequential(nn.GELU(), nn.Linear(bottleneck_dim, 1))
+        nn.init.zeros_(self.gate[-1].weight)
+        nn.init.constant_(self.gate[-1].bias, -2.0)
+
+    def forward(self, feature: torch.Tensor, question: torch.Tensor, *, return_gate: bool = False):
+        squeezed = feature.ndim == 2
+        if squeezed:
+            feature = feature.unsqueeze(0)
+        if question.ndim == 2:
+            question = question[:, None, :]
+        if question.ndim != 3 or question.shape[0] != feature.shape[0] or question.shape[-1] != self.hidden_size:
+            raise ValueError(f"Question feature must be [B,H] or [B,1,H], got {question.shape}")
+        delta = self.restorer.delta(feature)
+        logits = self.gate(self.visual(feature) + self.question(question))
+        gate = torch.sigmoid(logits)
+        restored = feature + gate * delta
+        if squeezed:
+            restored, gate = restored.squeeze(0), gate.squeeze(0)
+        return (restored, gate) if return_gate else restored
+
 
 def masked_feature_loss(
     restored: torch.Tensor,

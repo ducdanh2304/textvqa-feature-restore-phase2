@@ -1,315 +1,230 @@
-# Phase 2: Huấn luyện mô-đun phục hồi đặc trưng cho ảnh Scene Text suy thoái
+# Phục hồi đặc trưng ảnh suy thoái cho TextVQA — Giai đoạn 2 đến 7
 
-Kho mã này huấn luyện một mô-đun nhỏ để biến **đặc trưng của ảnh suy thoái** trở nên gần với **đặc trưng của ảnh sạch tương ứng**. Quá trình phục hồi diễn ra trên đặc trưng thị giác (latent feature), không tạo lại ảnh ở mức pixel.
+Kho mã này chạy toàn bộ nghiên cứu bằng **một tệp Python duy nhất**:
 
-## 1. Phase 2 làm gì?
+```bash
+python3.11 run_pipeline.py \
+  --input-root /datastore/dungmt/textvqa/input \
+  --output-root /datastore/dungmt/textvqa/output
+```
+
+Người chạy không cần sửa YAML, không cần khai báo biến môi trường và không cần chạy `run.sh`.
+Chương trình tự tìm dữ liệu trong `--input-root`, kiểm tra cấu trúc, tải mô hình Qwen, chạy lần lượt Giai đoạn 2–7 và tiếp tục được khi bị ngắt.
+
+## 1. Nghiên cứu này làm gì?
+
+Mục tiêu là sửa **feature thị giác bên trong Qwen2.5-VL**, không tạo ảnh phục hồi ở mức pixel.
 
 ```text
-Ảnh sạch ──────► Vision Encoder Qwen ─► đặc trưng sạch ───────────────┐
-                                                                    │ so sánh
-Ảnh suy thoái ─► Vision Encoder Qwen ─► đặc trưng suy thoái ─► Adapter
-                                                                    │
-                                                                    ▼
-                                                        đặc trưng được phục hồi
+Ảnh suy thoái → Vision Encoder → feature suy thoái → mô-đun phục hồi → feature đã sửa → Qwen trả lời
+Ảnh sạch     → Vision Encoder → feature sạch ────────┘ dùng làm mục tiêu khi huấn luyện
 ```
 
-Trong quá trình huấn luyện:
+| Giai đoạn | Việc thực hiện | Câu hỏi cần trả lời |
+|---|---|---|
+| 2 | Huấn luyện residual adapter bằng feature sạch/suy thoái | Có kéo feature suy thoái gần feature sạch được không? |
+| 3 | Đánh giá `clean/degraded × base/adapter` | Adapter cơ sở có làm TextVQA chính xác hơn không? |
+| 4 | Thêm identity loss trên feature sạch | Có giảm trường hợp sửa feature đang tốt thành xấu không? |
+| 5 | Thêm gate riêng cho từng visual token | Có học được token nào cần sửa và sửa bao nhiêu không? |
+| 6 | Cho gate nhìn thêm câu hỏi | Có ưu tiên đúng token liên quan đến câu hỏi không? |
+| 7 | Tối ưu thêm bằng answer loss của Qwen đóng băng | Feature đã sửa có trực tiếp giúp câu trả lời đúng hơn không? |
 
-1. Đóng băng toàn bộ `Qwen/Qwen2.5-VL-3B-Instruct`.
-2. Trích đặc trưng từ từng cặp ảnh sạch và ảnh suy thoái.
-3. Đưa đặc trưng suy thoái qua adapter.
-4. So sánh kết quả với đặc trưng sạch.
-5. Chỉ cập nhật trọng số của adapter.
-6. Chọn checkpoint tốt nhất dựa trên tập phát triển.
+Giai đoạn 3–7 đều báo cáo Official TextVQA Accuracy, ANLS, chênh lệch so với base, bootstrap 95% CI và win/tie/loss.
 
-Adapter có kiến trúc:
+## 2. Cần tải những gì?
 
-```text
-LayerNorm(2048)
-→ Linear(2048, 256)
-→ GELU
-→ Linear(256, 2048)
-→ cộng phần dư với đặc trưng đầu vào
-```
+Cần đúng ba dataset và một mô hình:
 
-### Đầu vào
+| Thành phần | Liên kết | Dùng để làm gì? |
+|---|---|---|
+| Kết quả Giai đoạn 1 | [textvqa-feature-restore-v1](https://www.kaggle.com/datasets/embechuangoan/textvqa-feature-restore-v1) | 2.000 cặp train, 200 cặp dev và manifest |
+| Ảnh suy thoái benchmark | [data-suy-thoai-text-vqa](https://www.kaggle.com/datasets/anhthu128/data-suy-thoai-text-vqa) | 1.000 ảnh `realistic_mix/L2` để đánh giá |
+| Ảnh TextVQA sạch | [textvqa](https://www.kaggle.com/datasets/dmytruto/textvqa) | 1.000 ảnh sạch tương ứng để đánh giá |
+| Mô hình | `Qwen/Qwen2.5-VL-3B-Instruct` | Vision encoder và mô hình trả lời VQA |
 
-- 2.000 cặp ảnh sạch và ảnh suy thoái để huấn luyện.
-- 200 cặp ảnh sạch và ảnh suy thoái để chọn checkpoint.
-- Các manifest và báo cáo nguồn gốc dữ liệu từ Phase 1.
-- Mô hình `Qwen/Qwen2.5-VL-3B-Instruct`.
+Dataset Giai đoạn 1 đang để **Private**. Chủ dataset phải vào **Settings → Sharing** và thêm đúng tài khoản Kaggle của người chạy trước khi tải.
 
-### Đầu ra chính
+Không cần tải dataset `outputs.zip` của khảo sát cũ. Nó chỉ là kết quả tham khảo, không phải đầu vào huấn luyện.
 
-- `best_adapter.pt`: trọng số adapter tốt nhất.
-- Lịch sử train/dev loss.
-- Báo cáo kiểm tra checkpoint và nguồn gốc thí nghiệm.
-- Gói `textvqa_phase2_output.zip` để dùng ở Phase 3.
+## 3. Chuẩn bị máy H200 từ đầu
 
-> Phase 2 chỉ huấn luyện khả năng phục hồi đặc trưng. Nó chưa sinh câu trả lời và chưa tính TextVQA Accuracy. Việc gắn adapter vào MLLM và đánh giá VQA thuộc Phase 3.
+Yêu cầu: Linux, GPU NVIDIA H200, Python 3.10/3.11, Git và đủ dung lượng cho dữ liệu, Qwen, feature cache.
 
-## 2. Yêu cầu hệ thống
-
-- Linux.
-- Python 3.10 hoặc 3.11.
-- CUDA và GPU NVIDIA; cấu hình mặc định dành cho H200.
-- Có mạng để tải Qwen từ Hugging Face, hoặc có sẵn mô hình cục bộ.
-- Khoảng trống đĩa đủ cho dataset, mô hình và 4.400 tensor đặc trưng.
-
-## 3. Chuẩn bị dữ liệu Phase 1
-
-Dataset cần dùng:
-
-[textvqa-feature-restore-v1 trên Kaggle](https://www.kaggle.com/datasets/embechuangoan/textvqa-feature-restore-v1)
-
-Dataset hiện ở chế độ riêng tư. Tài khoản Kaggle dùng để tải phải được chủ sở hữu cấp quyền trước.
-
-Không cần tải lại bộ TextVQA gốc, bộ ảnh suy thoái ban đầu hoặc 1.000 ảnh benchmark. Phase 2 chỉ sử dụng dataset kết quả của Phase 1 ở liên kết trên.
-
-### Cách A: tải bằng trình duyệt
-
-1. Mở liên kết dataset.
-2. Bấm **Download**.
-3. Chuyển tệp ZIP lên máy chạy.
-4. Giải nén và đưa dữ liệu về đúng vị trí:
+### Bước 1 — lấy mã nguồn
 
 ```bash
-mkdir -p "$HOME/textvqa_phase2_download"
-mkdir -p "$HOME/textvqa_phase2_data/phase1"
-
-python3.11 -m zipfile -e \
-  /duong/dan/toi/textvqa-feature-restore-v1.zip \
-  "$HOME/textvqa_phase2_download"
-
-cp -a \
-  "$HOME/textvqa_phase2_download/phase1_dataset/textvqa_feature_restore_v1" \
-  "$HOME/textvqa_phase2_data/phase1/"
-```
-
-### Cách B: tải bằng Kaggle CLI
-
-```bash
-python3.11 -m venv "$HOME/.venvs/kaggle-cli"
-"$HOME/.venvs/kaggle-cli/bin/python" -m pip install "kaggle==1.7.4.5"
-"$HOME/.venvs/kaggle-cli/bin/kaggle" auth login --no-launch-browser
-
-mkdir -p "$HOME/textvqa_phase2_download"
-"$HOME/.venvs/kaggle-cli/bin/kaggle" datasets download \
-  embechuangoan/textvqa-feature-restore-v1 \
-  -p "$HOME/textvqa_phase2_download" \
-  --unzip
-
-mkdir -p "$HOME/textvqa_phase2_data/phase1"
-cp -a \
-  "$HOME/textvqa_phase2_download/phase1_dataset/textvqa_feature_restore_v1" \
-  "$HOME/textvqa_phase2_data/phase1/"
-```
-
-### Kiểm tra dữ liệu
-
-```bash
-test -f "$HOME/textvqa_phase2_data/phase1/textvqa_feature_restore_v1/train_manifest.csv" \
-  && echo "Dataset hợp lệ"
-```
-
-Cấu trúc tối thiểu:
-
-```text
-textvqa_phase2_data/
-└── phase1/
-    └── textvqa_feature_restore_v1/
-        ├── train_manifest.csv
-        ├── dev_manifest.csv
-        ├── benchmark_excluded_image_ids.csv
-        ├── split_summary.json
-        ├── architecture_report.json
-        ├── injection_point_report.json
-        ├── adapter_config.json
-        └── data/
-            ├── train/
-            │   ├── clean/
-            │   └── degraded/
-            └── dev/
-                ├── clean/
-                └── degraded/
-```
-
-Không chỉ sao chép các tệp CSV. Chương trình cần toàn bộ ảnh trong thư mục `data/`.
-
-## 4. Tải mã nguồn và tạo môi trường
-
-```bash
+cd /datastore/dungmt
 git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git
 cd textvqa-feature-restore-phase2
-bash scripts/setup_env.sh
-source .venv/bin/activate
 ```
 
-Thiết lập đường dẫn dùng chung:
+### Bước 2 — tạo môi trường tự động
 
 ```bash
-export TEXTVQA_PHASE2_DATA="$HOME/textvqa_phase2_data"
-export TEXTVQA_PHASE2_OUTPUT="$HOME/textvqa_phase2_output"
+python3.11 run_pipeline.py --help
 ```
 
-Nếu máy không có mạng, chuẩn bị wheel cache và bản Qwen cục bộ rồi chạy:
+Lần đầu, tệp này tự tạo `.venv` và cài đúng thư viện. Những lần sau nó dùng lại môi trường đó.
+
+### Bước 3A — thuận tiện nhất: tải tự động bằng Kaggle
+
+Đăng nhập Kaggle một lần:
 
 ```bash
-bash scripts/setup_env.sh --offline --wheel-cache /duong/dan/toi/wheels
+.venv/bin/kaggle auth login --no-launch-browser
 ```
 
-Mô hình cục bộ phải có đầy đủ cấu hình, trọng số, tokenizer và tệp `REVISION` chứa:
+Mở địa chỉ được in ra, đăng nhập, rồi dán mã xác thực vào terminal. Sau đó chạy:
+
+```bash
+python3.11 run_pipeline.py \
+  --download-data \
+  --input-root /datastore/dungmt/textvqa/input \
+  --output-root /datastore/dungmt/textvqa/output
+```
+
+Tùy chọn `--download-data` tự tải và giải nén cả ba dataset. Nếu một thư mục đã có dữ liệu, chương trình giữ nguyên thư mục đó.
+
+### Bước 3B — nếu tải bằng trình duyệt
+
+1. Mở ba liên kết ở mục 2 và bấm **Download**.
+2. Chuyển ba tệp ZIP lên máy H200.
+3. Giải nén mỗi ZIP vào một thư mục con bất kỳ bên trong `/datastore/dungmt/textvqa/input`.
 
 ```text
-66285546d2b821cf421d4f5eb2576359d3770cd3
+/datastore/dungmt/textvqa/input/
+├── phase1/       ← giải nén textvqa-feature-restore-v1 vào đây
+├── degraded/     ← giải nén data-suy-thoai-text-vqa vào đây
+└── clean/        ← giải nén dmytruto/textvqa vào đây
 ```
 
-## 5. Kiểm tra mã nguồn trên CPU
+Tên và số tầng thư mục con không bắt buộc giống ví dụ. Chương trình tự dò file cần thiết. Không di chuyển riêng từng ảnh và không sửa đường dẫn trong CSV.
 
-Bước này không tải Qwen và không cần GPU:
-
-```bash
-pytest -q
-```
-
-## 6. Chạy Phase 2 từng bước
-
-### Bước 1: kiểm tra dữ liệu và máy chạy
-
-```bash
-bash scripts/preflight.sh \
-  --config configs/phase2_h200.yaml \
-  --data-root "$TEXTVQA_PHASE2_DATA" \
-  --output-root "$TEXTVQA_PHASE2_OUTPUT"
-```
-
-Chỉ tiếp tục khi `$TEXTVQA_PHASE2_OUTPUT/preflight_report.json` có `status: READY`.
-
-### Bước 2: trích đặc trưng bằng Qwen
-
-```bash
-bash scripts/cache_features.sh \
-  --config configs/phase2_h200.yaml \
-  --data-root "$TEXTVQA_PHASE2_DATA" \
-  --output-root "$TEXTVQA_PHASE2_OUTPUT"
-```
-
-Bước này trích và lưu 4.400 tensor: 2.000 cặp train và 200 cặp dev, mỗi cặp gồm ảnh sạch và ảnh suy thoái. Đây thường là bước tốn thời gian nhất.
-
-### Bước 3: huấn luyện adapter
-
-```bash
-bash scripts/train_adapter.sh \
-  --config configs/phase2_h200.yaml \
-  --data-root "$TEXTVQA_PHASE2_DATA" \
-  --output-root "$TEXTVQA_PHASE2_OUTPUT"
-```
-
-Cấu hình mặc định:
-
-- AdamW, learning rate `1e-4`.
-- Tối đa 20 epoch.
-- Early stopping sau 4 epoch liên tiếp không cải thiện dev loss.
-- Chỉ adapter được cập nhật; Qwen luôn đóng băng.
-
-Nếu quá trình bị gián đoạn:
-
-```bash
-bash scripts/train_adapter.sh \
-  --config configs/phase2_h200.yaml \
-  --data-root "$TEXTVQA_PHASE2_DATA" \
-  --output-root "$TEXTVQA_PHASE2_OUTPUT" \
-  --resume "$TEXTVQA_PHASE2_OUTPUT/training/last_checkpoint.pt"
-```
-
-### Bước 4: kiểm tra checkpoint tốt nhất
-
-```bash
-bash scripts/verify_checkpoint.sh \
-  --config configs/phase2_h200.yaml \
-  --data-root "$TEXTVQA_PHASE2_DATA" \
-  --output-root "$TEXTVQA_PHASE2_OUTPUT" \
-  --checkpoint "$TEXTVQA_PHASE2_OUTPUT/training/best_adapter.pt"
-```
-
-Bước này kiểm tra checkpoint có đúng kiến trúc, đúng nguồn gốc, không chứa giá trị lỗi và có thể phục hồi đặc trưng dev hay không.
-
-### Bước 5: đóng gói kết quả
-
-```bash
-bash scripts/make_bundle.sh \
-  --config configs/phase2_h200.yaml \
-  --data-root "$TEXTVQA_PHASE2_DATA" \
-  --output-root "$TEXTVQA_PHASE2_OUTPUT"
-```
-
-Tệp cuối:
+## 4. Cấu trúc dữ liệu mà chương trình tự tìm
 
 ```text
-$HOME/textvqa_phase2_output.zip
+Giai đoạn 1/
+└── textvqa_feature_restore_v1/
+    ├── train_manifest.csv
+    ├── dev_manifest.csv
+    ├── benchmark_excluded_image_ids.csv
+    └── data/
+        ├── train/clean/       (2.000 ảnh)
+        ├── train/degraded/    (2.000 ảnh)
+        ├── dev/clean/         (200 ảnh)
+        └── dev/degraded/      (200 ảnh)
+
+Dataset suy thoái/
+└── textvqa_realistic_v2/main/
+    ├── final_main_manifest.csv             (1.000 dòng)
+    └── images/realistic_mix/L2/             (1.000 ảnh PNG)
+
+Dataset sạch/
+└── .../train_images/                       (có đủ 1.000 image_id trong manifest)
 ```
 
-## 7. Chạy toàn bộ tự động
+Chương trình ghi đường dẫn đã tìm thấy vào `output/resolved_inputs.json`. Nếu tìm thấy 0 hoặc nhiều hơn 1 vị trí hợp lệ, nó dừng và liệt kê các vị trí để tránh dùng nhầm dataset.
 
-Sau khi chuẩn bị dữ liệu và môi trường:
+## 5. Lệnh chạy chính
+
+### Máy có Internet
 
 ```bash
-bash scripts/run_all_phase2.sh \
-  --config configs/phase2_h200.yaml \
-  --data-root "$TEXTVQA_PHASE2_DATA" \
-  --output-root "$TEXTVQA_PHASE2_OUTPUT"
+python3.11 run_pipeline.py \
+  --input-root /datastore/dungmt/textvqa/input \
+  --output-root /datastore/dungmt/textvqa/output
 ```
 
-Chỉ dùng lệnh này với thư mục output mới. Khi tiếp tục một phiên train bị gián đoạn, dùng `--resume` ở Bước 3.
+Qwen được tải tự động từ Hugging Face ở revision đã khóa.
 
-## 8. Kết quả sau khi chạy
+### Máy không có Internet
+
+Chép snapshot đầy đủ của Qwen lên máy rồi chạy:
+
+```bash
+python3.11 run_pipeline.py \
+  --input-root /datastore/dungmt/textvqa/input \
+  --output-root /datastore/dungmt/textvqa/output \
+  --model-path /datastore/dungmt/models/Qwen2.5-VL-3B-Instruct \
+  --offline
+```
+
+### Chạy lại sau khi bị ngắt
+
+Chạy lại đúng lệnh cũ. Chương trình giữ feature cache, checkpoint và prediction đã hoàn thành. Không xóa `output` nếu muốn tiếp tục.
+
+### Chỉ chạy tiếp một số giai đoạn
+
+```bash
+python3.11 run_pipeline.py \
+  --input-root /datastore/dungmt/textvqa/input \
+  --output-root /datastore/dungmt/textvqa/output \
+  --phases 4,5,6,7
+```
+
+Chương trình kiểm tra checkpoint giai đoạn trước trước khi chạy tiếp.
+
+## 6. Kết quả nằm ở đâu?
 
 ```text
-textvqa_phase2_output/
-├── preflight_report.json
-├── environment.json
-├── phase2_config_resolved.yaml
-├── cache/
-│   ├── manifest.jsonl
-│   ├── cache_summary.json
-│   └── features/*.pt
-├── training/
-│   ├── train_history.csv
-│   ├── dev_history.csv
-│   ├── best_adapter.pt
-│   ├── last_checkpoint.pt
-│   ├── checkpoint_manifest.json
-│   ├── early_stopping.json
-│   └── training_summary.json
-├── verification/
-│   └── checkpoint_verification.json
-└── artifact_manifest.json
+output/
+├── resolved_inputs.json
+├── pipeline_state.json
+├── final_summary.json
+├── phase2_training/
+│   ├── cache/
+│   ├── training/best_adapter.pt
+│   └── verification/
+├── phase3_baseline_evaluation/
+│   ├── predictions.csv
+│   ├── scored_predictions.csv
+│   └── evaluation_report.json
+├── phase4_identity/
+│   ├── best_model.pt
+│   ├── history.csv
+│   └── evaluation/evaluation_report.json
+├── phase5_token_gate/
+├── phase6_question_gate/
+└── phase7_answer_loss/
+    ├── best_model.pt
+    ├── history.csv
+    └── evaluation/evaluation_report.json
 ```
 
-Các tệp quan trọng cần giữ:
+Xem `final_summary.json` trước. Trong mỗi `evaluation_report.json`:
 
-- `training/best_adapter.pt`
-- `phase2_config_resolved.yaml`
-- `artifact_manifest.json`
-- `training/checkpoint_manifest.json`
-- `training/training_summary.json`
-- `verification/checkpoint_verification.json`
+- `degraded_base`: Qwen gốc trên ảnh suy thoái;
+- `degraded_adapter`: Qwen với mô-đun phục hồi;
+- `mean_delta > 0`: adapter cải thiện trung bình;
+- CI 95% nằm hoàn toàn trên 0: bằng chứng cải thiện rõ hơn;
+- `wins/ties/losses`: số câu adapter làm tốt hơn, bằng nhau hoặc tệ hơn.
 
-## 9. Chạy qua SLURM
+## 7. Quy tắc kết luận
 
-Sửa `REPO_ROOT`, `DATA_ROOT`, `OUTPUT_ROOT` và đường dẫn log trong `slurm/phase2_h200.sbatch`, sau đó chạy:
+1. Chỉ kết luận tốt hơn khi **Official TextVQA Accuracy trên ảnh suy thoái tăng**.
+2. Feature MSE/cosine tốt hơn chỉ là chỉ báo trung gian.
+3. So sánh trên cùng 1.000 câu hỏi, cùng model revision, prompt và cách giải mã.
+4. Luôn xem clean arm để phát hiện negative restoration.
+5. ANLS là chỉ số bổ sung; Official TextVQA Accuracy là chỉ số chính.
 
-```bash
-sbatch slurm/phase2_h200.sbatch
-```
+## 8. Lỗi thường gặp
 
-## 10. Giới hạn của Phase 2
+### `Không tìm thấy bộ dữ liệu...`
 
-- Chưa đánh giá TextVQA Accuracy hoặc ANLS.
-- Chưa chứng minh adapter giúp MLLM trả lời tốt hơn.
-- Chưa xử lý theo câu hỏi hoặc tập trung riêng vào vùng chữ.
-- Kết quả phải được đánh giá trên benchmark đã khóa ở Phase 3.
+Dataset chưa giải nén đầy đủ hoặc đặt ngoài `--input-root`. Đọc các đường dẫn trong lỗi rồi chuyển cả thư mục dataset vào `--input-root`.
 
-Không dùng việc dev feature loss giảm để kết luận độ chính xác VQA đã tăng.
+### Tìm thấy nhiều vị trí
 
-Xem thêm cấu trúc dữ liệu tại [docs/DATA_LAYOUT.md](docs/DATA_LAYOUT.md).
+Cùng một dataset bị giải nén hai lần. Giữ một bản duy nhất trong `--input-root`.
+
+### Kaggle báo không có quyền
+
+Tài khoản đang đăng nhập chưa được chia sẻ dataset Giai đoạn 1. Chủ dataset cần thêm tài khoản đó trong **Settings → Sharing**.
+
+### Hết bộ nhớ GPU
+
+Kiểm tra không có tiến trình khác chiếm GPU. Cấu hình chính dành cho một H200. `--allow-non-h200` chỉ dùng chạy thử, không dùng làm kết quả chính.
+
+### Xem tiến độ
+
+Mở `pipeline_state.json`, `history.csv` và `predictions.csv`. Các tệp này được cập nhật trong quá trình chạy.

@@ -92,6 +92,8 @@ def write_resolved_config(cfg: dict[str, Any], destination: str | Path) -> None:
 
 
 def phase1_root(cfg: dict[str, Any]) -> Path:
+    if cfg["paths"].get("phase1_root"):
+        return Path(cfg["paths"]["phase1_root"])
     return Path(cfg["paths"]["data_root"]) / "phase1" / "textvqa_feature_restore_v1"
 
 

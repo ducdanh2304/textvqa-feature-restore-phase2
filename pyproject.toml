@@ -20,6 +20,8 @@ dependencies = [
   "PyYAML==6.0.2",
   "matplotlib==3.10.3",
   "tqdm==4.67.1",
+  "rapidfuzz==3.14.1",
+  "kaggle==1.7.4.5",
 ]
 
 [project.optional-dependencies]
