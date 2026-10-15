@@ -19,6 +19,7 @@ from .research_training import load_research_model
 
 EVAL_REV = "72f898ec35af86567423c7a019dd1dc5175d1a5a"
 EVAL_URL = f"https://raw.githubusercontent.com/facebookresearch/mmf/{EVAL_REV}/mmf/utils/m4c_evaluators.py"
+STVQA_METRIC_URL = "https://rrc.cvc.uab.es/?ch=11&com=tasks"
 PROMPT = "Answer the question using the image. Reply with only the short answer, with no explanation. Question: {question}"
 
 
@@ -34,15 +35,20 @@ def _answer_processor(cache: Path):
     return namespace["EvalAIAnswerProcessor"]()
 
 
-def _score(prediction: str, answers: list[str], normalize: Any) -> tuple[float, float]:
-    pred = normalize(prediction); refs = [normalize(str(value)) for value in answers]
+def _score(prediction: str, answers: list[str], normalize: Any, benchmark_name: str) -> tuple[float, float, float]:
+    if benchmark_name == "stvqa":
+        pred = str(prediction).lower().strip(); refs = [str(value).lower().strip() for value in answers]
+    else:
+        pred = normalize(prediction); refs = [normalize(str(value)) for value in answers]
     matches = sum(value == pred for value in refs)
-    official = sum(min((matches - int(value == pred)) / 3.0, 1.0) for value in refs) / len(refs)
+    official = (sum(min((matches - int(value == pred)) / 3.0, 1.0) for value in refs) / len(refs)
+                if len(refs) == 10 else float(matches > 0))
+    exact = float(matches > 0)
     similarities = []
     for ref in refs:
         distance = Levenshtein.distance(pred, ref) / max(len(pred), len(ref), 1)
         similarities.append(1.0 - distance if distance < 0.5 else 0.0)
-    return float(official), float(max(similarities, default=0.0))
+    return float(official), exact, float(max(similarities, default=0.0))
 
 
 def _bootstrap(base: np.ndarray, candidate: np.ndarray) -> dict[str, Any]:
@@ -57,7 +63,7 @@ def _bootstrap(base: np.ndarray, candidate: np.ndarray) -> dict[str, Any]:
 
 def evaluate_vqa(*, phase: int, cfg: dict[str, Any], checkpoint: Path, benchmark_manifest: Path,
                  clean_root: Path, degraded_root: Path, destination: Path,
-                 base_predictions: Path | None = None) -> dict[str, Any]:
+                 base_predictions: Path | None = None, benchmark_name: str = "textvqa") -> dict[str, Any]:
     destination.mkdir(parents=True, exist_ok=True)
     report_path = destination / "evaluation_report.json"
     predictions_path = destination / "predictions.csv"
@@ -139,18 +145,21 @@ def evaluate_vqa(*, phase: int, cfg: dict[str, Any], checkpoint: Path, benchmark
         base = pd.read_csv(base_predictions, dtype=str, keep_default_na=False)
         base = base[base["mode"] == "base"]
         rows.extend(base.to_dict("records"))
-    normalize = _answer_processor(destination / "m4c_evaluators_pinned.py")
+    normalize = (_answer_processor(destination / "m4c_evaluators_pinned.py")
+                 if benchmark_name == "textvqa" else lambda value: str(value).lower().strip())
     scored = []
     for row in rows:
-        official, anls = _score(row["raw_prediction"], json.loads(row["answers_json"]), normalize)
-        scored.append({**row, "official_textvqa": official, "anls": anls})
+        official, exact, anls = _score(row["raw_prediction"], json.loads(row["answers_json"]), normalize, benchmark_name)
+        scored.append({**row, "official_textvqa": official, "exact_match": exact, "anls": anls})
     table = pd.DataFrame(scored).drop_duplicates(["question_id", "condition", "mode"], keep="last")
     table.to_csv(destination / "scored_predictions.csv", index=False)
-    arms = {f"{condition}_{mode}": {metric: float(part[metric].mean()) for metric in ("official_textvqa", "anls")}
+    metrics = ("official_textvqa", "anls") if benchmark_name == "textvqa" else ("exact_match", "anls")
+    primary_metric = "official_textvqa" if benchmark_name == "textvqa" else "anls"
+    arms = {f"{condition}_{mode}": {metric: float(part[metric].mean()) for metric in metrics}
             for (condition, mode), part in table.groupby(["condition", "mode"])}
     comparison: dict[str, Any] = {}
     for condition in ("clean", "degraded"):
-        subset = table[table.condition == condition].pivot(index="question_id", columns="mode", values="official_textvqa")
+        subset = table[table.condition == condition].pivot(index="question_id", columns="mode", values=primary_metric)
         if {"base", "adapter"}.issubset(subset.columns):
             comparison[f"{condition}_adapter_minus_base"] = _bootstrap(subset.base.values, subset.adapter.values)
             changes = subset.reset_index()
@@ -159,15 +168,19 @@ def evaluate_vqa(*, phase: int, cfg: dict[str, Any], checkpoint: Path, benchmark
                                          ["ADAPTER_SUA_DUNG", "ADAPTER_LAM_SAI"], default="KHONG_DOI")
             changes.to_csv(destination / f"case_changes_{condition}.csv", index=False)
     labels = list(arms)
-    values = [100.0 * arms[label]["official_textvqa"] for label in labels]
+    values = [100.0 * arms[label][primary_metric] for label in labels]
     plt.figure(figsize=(max(7, len(labels) * 1.4), 4.5))
     bars = plt.bar(labels, values)
-    plt.ylabel("Official TextVQA Accuracy (%)"); plt.xticks(rotation=20, ha="right")
+    ylabel = "Official TextVQA Accuracy (%)" if benchmark_name == "textvqa" else "ST-VQA ANLS (%)"
+    plt.ylabel(ylabel); plt.xticks(rotation=20, ha="right")
     for bar, value in zip(bars, values):
         plt.text(bar.get_x() + bar.get_width() / 2, value, f"{value:.2f}", ha="center", va="bottom")
-    plt.tight_layout(); plt.savefig(destination / "official_textvqa_accuracy.png", dpi=180); plt.close()
-    report = {"status": "COMPLETE", "phase": phase, "n_questions": int(frame.question_id.nunique()),
-              "arms": arms, "paired_bootstrap_official_textvqa": comparison,
-              "checkpoint": str(checkpoint.resolve()), "metric_source": EVAL_URL}
+    figure_name = "official_textvqa_accuracy.png" if benchmark_name == "textvqa" else "stvqa_anls.png"
+    plt.tight_layout(); plt.savefig(destination / figure_name, dpi=180); plt.close()
+    report = {"status": "COMPLETE", "phase": phase, "benchmark": benchmark_name,
+              "primary_metric": primary_metric, "n_questions": int(frame.question_id.nunique()),
+              "arms": arms, "paired_bootstrap": comparison,
+              "checkpoint": str(checkpoint.resolve()),
+              "metric_source": EVAL_URL if benchmark_name == "textvqa" else STVQA_METRIC_URL}
     atomic_write_json(report_path, report)
     return report

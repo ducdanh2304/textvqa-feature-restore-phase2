@@ -29,22 +29,26 @@ Mục tiêu là sửa **feature thị giác bên trong Qwen2.5-VL**, không tạ
 | 6 | Cho gate nhìn thêm câu hỏi | Có ưu tiên đúng token liên quan đến câu hỏi không? |
 | 7 | Tối ưu thêm bằng answer loss của Qwen đóng băng | Feature đã sửa có trực tiếp giúp câu trả lời đúng hơn không? |
 
-Giai đoạn 3–7 đều báo cáo Official TextVQA Accuracy, ANLS, chênh lệch so với base, bootstrap 95% CI và win/tie/loss.
+Giai đoạn 3–7 đều đánh giá trên cả TextVQA và ST-VQA, báo cáo metric chính, chênh lệch so với base, bootstrap 95% CI và win/tie/loss.
 
 ## 2. Cần tải những gì?
 
-Cần đúng ba dataset và một mô hình:
+Cần các nguồn dữ liệu sau và một mô hình:
 
 | Thành phần | Liên kết | Dùng để làm gì? |
 |---|---|---|
 | Kết quả Giai đoạn 1 | [textvqa-feature-restore-v1](https://www.kaggle.com/datasets/embechuangoan/textvqa-feature-restore-v1) | 2.000 cặp train, 200 cặp dev và manifest |
 | Ảnh suy thoái benchmark | [data-suy-thoai-text-vqa](https://www.kaggle.com/datasets/anhthu128/data-suy-thoai-text-vqa) | 1.000 ảnh `realistic_mix/L2` để đánh giá |
 | Ảnh TextVQA sạch | [textvqa](https://www.kaggle.com/datasets/dmytruto/textvqa) | 1.000 ảnh sạch tương ứng để đánh giá |
+| Ảnh ST-VQA suy thoái | [st-vqa-suy-thoi](https://www.kaggle.com/datasets/anhthu128/st-vqa-suy-thoi) | Khoảng 5.000 ảnh `realistic_mix/L2` để kiểm tra ngoài miền |
+| Ảnh ST-VQA sạch | [vikhyatk/st-vqa](https://huggingface.co/datasets/vikhyatk/st-vqa) | Nguồn ảnh sạch tương ứng; chương trình tự lấy đúng ảnh theo manifest |
 | Mô hình | `Qwen/Qwen2.5-VL-3B-Instruct` | Vision encoder và mô hình trả lời VQA |
 
 Dataset Giai đoạn 1 đang để **Private**. Chủ dataset phải vào **Settings → Sharing** và thêm đúng tài khoản Kaggle của người chạy trước khi tải.
 
 Không cần tải dataset `outputs.zip` của khảo sát cũ. Nó chỉ là kết quả tham khảo, không phải đầu vào huấn luyện.
+
+ST-VQA được giữ làm **benchmark ngoài miền**, không trộn vào 2.000 cặp train. Nhờ vậy kết quả ST-VQA đo khả năng tổng quát sang một bộ dữ liệu khác thay vì đo việc mô hình ghi nhớ dữ liệu huấn luyện. Metric chính của ST-VQA là ANLS.
 
 ## 3. Chuẩn bị máy H200 từ đầu
 
@@ -83,19 +87,20 @@ python3.11 run_pipeline.py \
   --output-root /datastore/dungmt/textvqa/output
 ```
 
-Tùy chọn `--download-data` tự tải và giải nén cả ba dataset. Nếu một thư mục đã có dữ liệu, chương trình giữ nguyên thư mục đó.
+Tùy chọn `--download-data` tự tải và giải nén bốn dataset Kaggle. Chương trình sau đó tự tải snapshot ST-VQA sạch đã khóa từ Hugging Face và chỉ xuất các ảnh cần dùng. Nếu một thư mục đã có dữ liệu, chương trình giữ nguyên thư mục đó.
 
 ### Bước 3B — nếu tải bằng trình duyệt
 
-1. Mở ba liên kết ở mục 2 và bấm **Download**.
-2. Chuyển ba tệp ZIP lên máy H200.
+1. Mở bốn liên kết Kaggle ở mục 2 và bấm **Download**.
+2. Chuyển bốn tệp ZIP lên máy H200.
 3. Giải nén mỗi ZIP vào một thư mục con bất kỳ bên trong `/datastore/dungmt/textvqa/input`.
 
 ```text
 /datastore/dungmt/textvqa/input/
 ├── phase1/       ← giải nén textvqa-feature-restore-v1 vào đây
 ├── degraded/     ← giải nén data-suy-thoai-text-vqa vào đây
-└── clean/        ← giải nén dmytruto/textvqa vào đây
+├── clean/        ← giải nén dmytruto/textvqa vào đây
+└── stvqa_degraded/ ← giải nén st-vqa-suy-thoi vào đây
 ```
 
 Tên và số tầng thư mục con không bắt buộc giống ví dụ. Chương trình tự dò file cần thiết. Không di chuyển riêng từng ảnh và không sửa đường dẫn trong CSV.
@@ -121,9 +126,17 @@ Dataset suy thoái/
 
 Dataset sạch/
 └── .../train_images/                       (có đủ 1.000 image_id trong manifest)
+
+ST-VQA suy thoái/
+└── stvqa_realistic_v1_5k/main/
+    ├── final_main_manifest.csv
+    └── images/realistic_mix/L2/             (khoảng 5.000 ảnh)
+
+ST-VQA sạch do chương trình tạo/
+└── stvqa_clean_from_huggingface/stvqa_source_v1/images/
 ```
 
-Chương trình ghi đường dẫn đã tìm thấy vào `output/resolved_inputs.json`. Nếu tìm thấy 0 hoặc nhiều hơn 1 vị trí hợp lệ, nó dừng và liệt kê các vị trí để tránh dùng nhầm dataset.
+Chương trình ghép ST-VQA sạch bằng `source_row_index`, sau đó đối chiếu lại câu hỏi và danh sách đáp án với manifest suy thoái. Nếu không khớp, chương trình dừng thay vì đánh giá trên cặp ảnh sai. Các đường dẫn cuối cùng được ghi vào `output/resolved_inputs.json`.
 
 ## 5. Lệnh chạy chính
 
@@ -139,7 +152,7 @@ Qwen được tải tự động từ Hugging Face ở revision đã khóa.
 
 ### Máy không có Internet
 
-Chép snapshot đầy đủ của Qwen lên máy rồi chạy:
+Chép snapshot đầy đủ của Qwen và thư mục ST-VQA sạch đã materialize lên máy rồi chạy. Thư mục sạch cần đặt tại `input/stvqa_clean_from_huggingface/stvqa_source_v1/images/` kèm `materialization_report.json` ở thư mục cha.
 
 ```bash
 python3.11 run_pipeline.py \
@@ -176,9 +189,12 @@ output/
 │   ├── training/best_adapter.pt
 │   └── verification/
 ├── phase3_baseline_evaluation/
-│   ├── predictions.csv
-│   ├── scored_predictions.csv
-│   └── evaluation_report.json
+│   ├── textvqa/
+│   │   ├── predictions.csv
+│   │   └── evaluation_report.json
+│   └── stvqa/
+│       ├── predictions.csv
+│       └── evaluation_report.json
 ├── phase4_identity/
 │   ├── best_model.pt
 │   ├── history.csv
@@ -191,13 +207,15 @@ output/
     └── evaluation/evaluation_report.json
 ```
 
-Xem `final_summary.json` trước. Trong mỗi `evaluation_report.json`:
+Mỗi Giai đoạn 3–7 có hai thư mục đánh giá riêng: `textvqa/` và `stvqa/`. Xem `final_summary.json` trước. Trong mỗi `evaluation_report.json`:
 
 - `degraded_base`: Qwen gốc trên ảnh suy thoái;
 - `degraded_adapter`: Qwen với mô-đun phục hồi;
 - `mean_delta > 0`: adapter cải thiện trung bình;
 - CI 95% nằm hoàn toàn trên 0: bằng chứng cải thiện rõ hơn;
 - `wins/ties/losses`: số câu adapter làm tốt hơn, bằng nhau hoặc tệ hơn.
+
+TextVQA dùng Official TextVQA Accuracy làm metric chính. ST-VQA dùng ANLS làm metric chính; không lấy TextVQA soft accuracy để kết luận cho ST-VQA.
 
 ## 7. Quy tắc kết luận
 
