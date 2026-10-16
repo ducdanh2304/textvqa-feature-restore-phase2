@@ -3,7 +3,8 @@
 Kho mã này chạy toàn bộ nghiên cứu bằng **một tệp Python duy nhất**:
 
 ```bash
-python3.11 run_pipeline.py
+source /datastore/dungmt/venv/bin/activate
+python /datastore/dungmt/textvqa/run_all.py
 ```
 
 Người chạy không cần sửa YAML, không cần khai báo biến môi trường và không cần chạy `run.sh`.
@@ -64,19 +65,19 @@ Yêu cầu: Linux, GPU NVIDIA H200, Python 3.10/3.11, Git và đủ dung lượn
 
 ```bash
 cd /datastore/dungmt
-git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git
-cd textvqa-feature-restore-phase2
+git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git textvqa
 ```
 
-### Bước 2 — chạy
+### Bước 2 — kích hoạt môi trường và chạy
 
 ```bash
-python3.11 run_pipeline.py
+source /datastore/dungmt/venv/bin/activate
+python /datastore/dungmt/textvqa/run_all.py
 ```
 
 Đây là lệnh duy nhất cần chạy. Lần đầu, chương trình sẽ:
 
-1. Tự tạo `.venv` và cài thư viện.
+1. Tự cài thư viện còn thiếu vào `/datastore/dungmt/venv`.
 2. Tự tải bốn dataset Kaggle vào thư mục `data/`.
 3. Tự tải ST-VQA sạch và Qwen từ Hugging Face.
 4. Chạy Giai đoạn 2–7.
@@ -136,14 +137,15 @@ Chương trình ghép ST-VQA sạch bằng `source_row_index`, sau đó đối c
 ## 5. Lệnh chạy chính
 
 ```bash
-python3.11 run_pipeline.py
+source /datastore/dungmt/venv/bin/activate
+python /datastore/dungmt/textvqa/run_all.py
 ```
 
 Máy của trường có Internet nên Qwen và ST-VQA sạch được tải tự động ở đúng revision đã khóa.
 
 ### Chạy lại sau khi bị ngắt
 
-Chạy lại đúng `python3.11 run_pipeline.py`. Chương trình giữ feature cache, checkpoint và prediction đã hoàn thành. Không xóa thư mục `outputs/` nếu muốn tiếp tục.
+Chạy lại đúng hai dòng trên. Chương trình giữ feature cache, checkpoint và prediction đã hoàn thành. Không xóa thư mục `outputs/` nếu muốn tiếp tục.
 
 ## 6. Kết quả nằm ở đâu?
 
@@ -197,7 +199,7 @@ TextVQA dùng Official TextVQA Accuracy làm metric chính. ST-VQA dùng ANLS l�
 
 ### `Không tìm thấy bộ dữ liệu...`
 
-Dataset chưa tải hoặc giải nén đầy đủ. Chạy lại `python3.11 run_pipeline.py`; dữ liệu đã hoàn thành sẽ được giữ lại.
+Dataset chưa tải hoặc giải nén đầy đủ. Chạy lại `python /datastore/dungmt/textvqa/run_all.py`; dữ liệu đã hoàn thành sẽ được giữ lại.
 
 ### Tìm thấy nhiều vị trí
 
