@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     state_path = output_root / "pipeline_state.json"
     state: dict[str, Any] = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {"status": "RUNNING", "phases": {}}
 
-    from .research_training import train_answer_phase, train_feature_phase
+    from .research_training import create_feature_diagnostics, train_answer_phase, train_feature_phase
     from .vqa_evaluation import evaluate_vqa
     p2 = output_root / "phase2_training"; p3 = output_root / "phase3_baseline_evaluation"
     p4 = output_root / "phase4_identity"; p5 = output_root / "phase5_token_gate"
@@ -146,6 +146,12 @@ def main(argv: list[str] | None = None) -> int:
             print("\n=== GIAI ĐOẠN 2: HUẤN LUYỆN ADAPTER FEATURE ===", flush=True)
             state["phases"]["2"] = _phase2(cfg, p2); atomic_write_json(state_path, state)
         phase2_checkpoint = _need(p2 / "training/best_adapter.pt", "Cần chạy Giai đoạn 2 trước")
+        phase2_features = create_feature_diagnostics(
+            phase=2, cfg=cfg, phase1_root=inputs["phase1_root"], checkpoint=phase2_checkpoint,
+            destination=p2 / "visualizations",
+        )
+        state["phases"].setdefault("2", {})["feature_diagnostics"] = phase2_features
+        atomic_write_json(state_path, state)
         if 3 in phases:
             print("\n=== GIAI ĐOẠN 3: ĐÁNH GIÁ TEXTVQA + ST-VQA ===", flush=True)
             state["phases"]["3"] = evaluate_both(3, phase2_checkpoint, p3)
@@ -162,15 +168,25 @@ def main(argv: list[str] | None = None) -> int:
             training = train_feature_phase(phase=phase, cfg=cfg, phase1_root=inputs["phase1_root"],
                                            source_checkpoint=previous, destination=destination)
             previous = destination / "best_model.pt"
+            features = create_feature_diagnostics(
+                phase=phase, cfg=cfg, phase1_root=inputs["phase1_root"], checkpoint=previous,
+                destination=destination / "visualizations",
+            )
             evaluation = evaluate_both(phase, previous, destination / "evaluation", text_base, stvqa_base)
-            state["phases"][str(phase)] = {"training": training, "evaluation": evaluation}; atomic_write_json(state_path, state)
+            state["phases"][str(phase)] = {"training": training, "feature_diagnostics": features,
+                                           "evaluation": evaluation}; atomic_write_json(state_path, state)
         if 7 in phases:
             previous = _need(p6 / "best_model.pt", "Cần chạy Giai đoạn 6 trước")
             print("\n=== GIAI ĐOẠN 7: TỐI ƯU TRỰC TIẾP CÂU TRẢ LỜI VQA ===", flush=True)
             training = train_answer_phase(cfg=cfg, phase1_root=inputs["phase1_root"], source_checkpoint=previous,
                                           destination=p7, max_epochs=args.phase7_epochs)
+            features = create_feature_diagnostics(
+                phase=7, cfg=cfg, phase1_root=inputs["phase1_root"], checkpoint=p7 / "best_model.pt",
+                destination=p7 / "visualizations",
+            )
             evaluation = evaluate_both(7, p7 / "best_model.pt", p7 / "evaluation", text_base, stvqa_base)
-            state["phases"]["7"] = {"training": training, "evaluation": evaluation}; atomic_write_json(state_path, state)
+            state["phases"]["7"] = {"training": training, "feature_diagnostics": features,
+                                      "evaluation": evaluation}; atomic_write_json(state_path, state)
         state["status"] = "COMPLETE"; atomic_write_json(state_path, state)
         atomic_write_json(output_root / "final_summary.json", state)
         print(f"\nHOÀN TẤT. Xem kết quả tại: {output_root}", flush=True)

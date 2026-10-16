@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 from .adapter import GatedFeatureRestorer, QuestionGatedFeatureRestorer, ResidualFeatureRestorer
 from .io_utils import atomic_torch_save, atomic_write_json
@@ -59,13 +60,120 @@ def _question_vectors(cfg: dict[str, Any], phase1_root: Path, destination: Path)
 
 
 def _model_for_phase(phase: int) -> torch.nn.Module:
-    if phase == 4:
+    if phase in {2, 3, 4}:
         return ResidualFeatureRestorer()
     if phase == 5:
         return GatedFeatureRestorer()
     if phase in {6, 7}:
         return QuestionGatedFeatureRestorer()
     raise ValueError(phase)
+
+
+def create_training_visualizations(destination: Path, phase: int) -> None:
+    history_path = destination / "history.csv"
+    if not history_path.is_file():
+        return
+    history = pd.read_csv(history_path)
+    visual = destination / "visualizations"; visual.mkdir(parents=True, exist_ok=True)
+    pairs = []
+    for train_column in [column for column in history.columns if column.startswith("train_")]:
+        name = train_column.removeprefix("train_"); dev_column = f"dev_{name}"
+        if dev_column in history.columns:
+            pairs.append((name, train_column, dev_column))
+    if pairs:
+        figure, axes = plt.subplots(len(pairs), 1, figsize=(8, max(4, 3.3 * len(pairs))), squeeze=False)
+        for axis, (name, train_column, dev_column) in zip(axes[:, 0], pairs):
+            axis.plot(history.epoch, history[train_column], marker="o", label="Train")
+            axis.plot(history.epoch, history[dev_column], marker="o", label="Dev")
+            axis.set_title(name); axis.set_xlabel("Epoch"); axis.grid(alpha=.25); axis.legend()
+        figure.suptitle(f"Giai đoạn {phase}: diễn biến huấn luyện", fontsize=14)
+        figure.tight_layout(); figure.savefig(visual / "training_curves.png", dpi=180); plt.close(figure)
+    (visual / "README.md").write_text(
+        "# Biểu đồ huấn luyện\n\n"
+        "`training_curves.png` đặt loss tập train và dev cạnh nhau theo epoch. Checkpoint được chọn theo dev loss; "
+        "khoảng cách train-dev tăng mạnh là dấu hiệu có thể quá khớp.\n",
+        encoding="utf-8",
+    )
+
+
+@torch.no_grad()
+def create_feature_diagnostics(
+    *, phase: int, cfg: dict[str, Any], phase1_root: Path, checkpoint: Path, destination: Path,
+) -> dict[str, Any]:
+    destination.mkdir(parents=True, exist_ok=True)
+    summary_path = destination / "feature_diagnostics_summary.json"
+    if summary_path.is_file() and (destination / "feature_diagnostics.csv").is_file():
+        return json.loads(summary_path.read_text(encoding="utf-8"))
+    device = torch.device("cuda:0")
+    model = _model_for_phase(phase).to(device=device, dtype=torch.float32)
+    model.load_state_dict(_state(checkpoint), strict=True); model.eval()
+    dev_set = CachePairDataset(cfg, "dev")
+    questions = None
+    if phase >= 6:
+        questions = _question_vectors(cfg, phase1_root, destination.parents[1] / "shared_question_embeddings.pt")
+    rows: list[dict[str, Any]] = []
+    for batch in batches(dev_set, list(range(len(dev_set))), 16):
+        clean, degraded, mask = (batch[key].to(device) for key in ("clean", "degraded", "valid_tokens"))
+        question = None
+        if questions is not None:
+            question = torch.stack([questions[str(qid)] for qid in batch["question_ids"]]).to(device)
+        if phase >= 5:
+            restored, gate = (model(degraded, question, return_gate=True) if question is not None
+                              else model(degraded, return_gate=True))
+        else:
+            restored, gate = model(degraded), None
+        for index, image_id in enumerate(batch["image_ids"]):
+            valid = mask[index]
+            before_cos = F.cosine_similarity(degraded[index, valid].float(), clean[index, valid].float(), dim=-1).mean()
+            after_cos = F.cosine_similarity(restored[index, valid].float(), clean[index, valid].float(), dim=-1).mean()
+            before_mse = (degraded[index, valid].float() - clean[index, valid].float()).pow(2).mean()
+            after_mse = (restored[index, valid].float() - clean[index, valid].float()).pow(2).mean()
+            row = {"image_id": image_id, "cosine_before": float(before_cos), "cosine_after": float(after_cos),
+                   "cosine_delta": float(after_cos - before_cos), "mse_before": float(before_mse),
+                   "mse_after": float(after_mse), "mse_delta": float(after_mse - before_mse)}
+            if gate is not None:
+                row["gate_mean"] = float(gate[index, valid].mean())
+            rows.append(row)
+    table = pd.DataFrame(rows); table.to_csv(destination / "feature_diagnostics.csv", index=False)
+    summary = {
+        "phase": phase, "n_samples": len(table),
+        "mean_cosine_before": float(table.cosine_before.mean()), "mean_cosine_after": float(table.cosine_after.mean()),
+        "mean_mse_before": float(table.mse_before.mean()), "mean_mse_after": float(table.mse_after.mean()),
+        "cosine_improved": int((table.cosine_delta > 0).sum()),
+        "mse_improved": int((table.mse_delta < 0).sum()),
+    }
+    if "gate_mean" in table:
+        summary["mean_gate"] = float(table.gate_mean.mean())
+    atomic_write_json(summary_path, summary)
+
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    axes[0].scatter(table.cosine_before, table.cosine_after, alpha=.65)
+    axes[0].plot([-1, 1], [-1, 1], "k--", linewidth=1); axes[0].set(xlim=(-1, 1), ylim=(-1, 1),
+        xlabel="Cosine trước phục hồi", ylabel="Cosine sau phục hồi", title="Độ gần với feature sạch")
+    axes[1].scatter(table.mse_before, table.mse_after, alpha=.65)
+    limit = float(max(table.mse_before.max(), table.mse_after.max(), 1e-6))
+    axes[1].plot([0, limit], [0, limit], "k--", linewidth=1); axes[1].set(
+        xlabel="MSE trước phục hồi", ylabel="MSE sau phục hồi", title="Sai số so với feature sạch")
+    figure.suptitle(f"Giai đoạn {phase}: từng mẫu dev"); figure.tight_layout()
+    figure.savefig(destination / "feature_before_after_scatter.png", dpi=180); plt.close(figure)
+
+    plt.figure(figsize=(8, 4.5)); plt.hist(table.cosine_delta, bins=25, color="#4c78a8", edgecolor="white")
+    plt.axvline(0, color="black", linewidth=1); plt.xlabel("Cosine sau - trước"); plt.ylabel("Số mẫu")
+    plt.title(f"Giai đoạn {phase}: phân bố thay đổi feature")
+    plt.tight_layout(); plt.savefig(destination / "feature_cosine_delta.png", dpi=180); plt.close()
+    if "gate_mean" in table:
+        plt.figure(figsize=(8, 4.5)); plt.hist(table.gate_mean, bins=25, color="#f28e2b", edgecolor="white")
+        plt.xlabel("Gate trung bình"); plt.ylabel("Số mẫu"); plt.title(f"Giai đoạn {phase}: mức can thiệp của gate")
+        plt.tight_layout(); plt.savefig(destination / "gate_distribution.png", dpi=180); plt.close()
+    (destination / "README.md").write_text(
+        "# Chẩn đoán phục hồi feature\n\n"
+        "- Điểm nằm trên đường chéo ở biểu đồ cosine: feature sau phục hồi gần feature sạch hơn.\n"
+        "- Điểm nằm dưới đường chéo ở biểu đồ MSE: sai số sau phục hồi thấp hơn.\n"
+        "- `feature_diagnostics.csv` chứa số liệu từng mẫu để kiểm tra trường hợp tốt và xấu.\n"
+        "- Đây là phục hồi feature ẩn; mô hình không sinh ảnh pixel phục hồi.\n",
+        encoding="utf-8",
+    )
+    return summary
 
 
 def _state(checkpoint: Path) -> dict[str, torch.Tensor]:
@@ -95,6 +203,7 @@ def train_feature_phase(
     destination.mkdir(parents=True, exist_ok=True)
     complete_path = destination / "training_summary.json"
     if complete_path.is_file() and (destination / "best_model.pt").is_file():
+        create_training_visualizations(destination, phase)
         return json.loads(complete_path.read_text(encoding="utf-8"))
     device = torch.device("cuda:0")
     model = _model_for_phase(phase).to(device=device, dtype=torch.float32)
@@ -175,6 +284,7 @@ def train_feature_phase(
                "objective": "feature_restore + 0.2 * clean_identity",
                "question_conditioned": phase >= 6, "checkpoint": str((destination / "best_model.pt").resolve())}
     atomic_write_json(complete_path, summary)
+    create_training_visualizations(destination, phase)
     return summary
 
 
@@ -190,6 +300,7 @@ def train_answer_phase(*, cfg: dict[str, Any], phase1_root: Path, source_checkpo
     destination.mkdir(parents=True, exist_ok=True)
     summary_path = destination / "training_summary.json"
     if summary_path.is_file() and (destination / "best_model.pt").is_file():
+        create_training_visualizations(destination, 7)
         return json.loads(summary_path.read_text(encoding="utf-8"))
     from qwen_vl_utils import process_vision_info
     from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
@@ -316,4 +427,5 @@ def train_answer_phase(*, cfg: dict[str, Any], phase1_root: Path, source_checkpo
                "objective": "answer_CE + 0.1 * feature_restore + 0.02 * clean_identity",
                "checkpoint": str((destination / "best_model.pt").resolve())}
     atomic_write_json(summary_path, summary)
+    create_training_visualizations(destination, 7)
     return summary

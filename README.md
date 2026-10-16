@@ -150,17 +150,27 @@ Chạy lại đúng hai dòng trên. Chương trình giữ feature cache, checkp
 ## 6. Kết quả nằm ở đâu?
 
 ```text
-output/
+outputs/
 ├── resolved_inputs.json
 ├── pipeline_state.json
 ├── final_summary.json
 ├── phase2_training/
 │   ├── cache/
 │   ├── training/best_adapter.pt
-│   └── verification/
+│   ├── verification/
+│   └── visualizations/
+│       ├── feature_before_after_scatter.png
+│       ├── feature_cosine_delta.png
+│       └── feature_diagnostics.csv
 ├── phase3_baseline_evaluation/
 │   ├── textvqa/
 │   │   ├── predictions.csv
+│   │   ├── per_question_comparison_degraded.csv
+│   │   ├── visualizations/
+│   │   │   ├── win_tie_loss.png
+│   │   │   ├── score_delta_histogram.png
+│   │   │   ├── base_vs_adapter_scatter.png
+│   │   │   └── qualitative_examples.png
 │   │   └── evaluation_report.json
 │   └── stvqa/
 │       ├── predictions.csv
@@ -186,6 +196,18 @@ Mỗi Giai đoạn 3–7 có hai thư mục đánh giá riêng: `textvqa/` và `
 - `wins/ties/losses`: số câu adapter làm tốt hơn, bằng nhau hoặc tệ hơn.
 
 TextVQA dùng Official TextVQA Accuracy làm metric chính. ST-VQA dùng ANLS làm metric chính; không lấy TextVQA soft accuracy để kết luận cho ST-VQA.
+
+Mỗi Giai đoạn 2, 4, 5, 6 và 7 có `visualizations/feature_diagnostics.csv` cùng biểu đồ so sánh feature trước/sau. Giai đoạn có gate còn có `gate_distribution.png`. Các Giai đoạn 4–7 có thêm `visualizations/training_curves.png`.
+
+Mỗi lần đánh giá ở Giai đoạn 3–7 tự tạo:
+
+- `per_question_comparison_clean.csv` và `per_question_comparison_degraded.csv`: câu hỏi, đáp án tham chiếu, câu trả lời base/adapter, điểm và chênh lệch;
+- `visualizations/win_tie_loss.png`: adapter sửa đúng, không đổi và làm sai bao nhiêu câu;
+- `visualizations/score_delta_histogram.png`: mức tăng/giảm điểm của từng câu;
+- `visualizations/base_vs_adapter_scatter.png`: so sánh điểm trước/sau theo từng câu;
+- `visualizations/qualitative_examples.png`: ảnh sạch, ảnh suy thoái đầu vào, câu trả lời và điểm trước/sau cho các trường hợp tiêu biểu.
+
+Nghiên cứu phục hồi feature ẩn nên không có ảnh pixel “đã phục hồi”. Ảnh định tính luôn ghi rõ ảnh suy thoái là đầu vào thật; hiệu quả phục hồi được biểu diễn bằng thay đổi feature và câu trả lời VQA.
 
 ## 7. Quy tắc kết luận
 

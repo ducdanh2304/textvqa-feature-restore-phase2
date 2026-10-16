@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import textwrap
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 import matplotlib.pyplot as plt
+from PIL import Image
 from rapidfuzz.distance import Levenshtein
 
 from .adapter import ResidualFeatureRestorer
@@ -61,14 +63,138 @@ def _bootstrap(base: np.ndarray, candidate: np.ndarray) -> dict[str, Any]:
             "ties": int((delta == 0).sum()), "losses": int((delta < 0).sum())}
 
 
+def _comparison_table(table: pd.DataFrame, condition: str, metric: str) -> pd.DataFrame:
+    columns = ["question_id", "image_id", "question", "answers_json", "raw_prediction", metric]
+    base = table[(table.condition == condition) & (table["mode"] == "base")][columns].copy()
+    adapter = table[(table.condition == condition) & (table["mode"] == "adapter")][columns].copy()
+    base = base.rename(columns={"raw_prediction": "base_prediction", metric: "base_score"})
+    adapter = adapter.rename(columns={"raw_prediction": "adapter_prediction", metric: "adapter_score"})
+    adapter = adapter[["question_id", "adapter_prediction", "adapter_score"]]
+    result = base.merge(adapter, on="question_id", how="inner", validate="one_to_one")
+    result["delta"] = result.adapter_score - result.base_score
+    result["case"] = np.select(
+        [result.delta > 0, result.delta < 0],
+        ["ADAPTER_SUA_DUNG", "ADAPTER_LAM_SAI"],
+        default="KHONG_DOI",
+    )
+    return result.sort_values(["delta", "question_id"], ascending=[False, True])
+
+
+def _find_image(root: Path, image_id: str) -> Path | None:
+    matches = [root / f"{image_id}{suffix}" for suffix in (".jpg", ".jpeg", ".png")]
+    found = [path for path in matches if path.is_file()]
+    return found[0] if len(found) == 1 else None
+
+
+def _create_evaluation_visualizations(
+    *, table: pd.DataFrame, destination: Path, clean_root: Path, degraded_root: Path,
+    benchmark_name: str, primary_metric: str,
+) -> dict[str, Any]:
+    visual = destination / "visualizations"
+    visual.mkdir(parents=True, exist_ok=True)
+    comparisons: dict[str, pd.DataFrame] = {}
+    for condition in ("clean", "degraded"):
+        comparison = _comparison_table(table, condition, primary_metric)
+        comparisons[condition] = comparison
+        comparison.to_csv(destination / f"per_question_comparison_{condition}.csv", index=False)
+
+    degraded = comparisons["degraded"]
+    counts = degraded["case"].value_counts().reindex(
+        ["ADAPTER_SUA_DUNG", "KHONG_DOI", "ADAPTER_LAM_SAI"], fill_value=0
+    )
+    labels = ["Sửa đúng", "Không đổi", "Làm sai"]
+    colors = ["#66bb6a", "#9e9e9e", "#ef5350"]
+    plt.figure(figsize=(7, 4.5))
+    bars = plt.bar(labels, counts.values, color=colors)
+    for bar, value in zip(bars, counts.values):
+        plt.text(bar.get_x() + bar.get_width() / 2, value, str(int(value)), ha="center", va="bottom")
+    plt.ylabel("Số câu hỏi"); plt.title("Ảnh suy thoái: thay đổi sau phục hồi feature")
+    plt.tight_layout(); plt.savefig(visual / "win_tie_loss.png", dpi=180); plt.close()
+
+    plt.figure(figsize=(7, 4.5))
+    plt.hist(degraded.delta, bins=25, color="#4c78a8", edgecolor="white")
+    plt.axvline(0, color="black", linewidth=1)
+    plt.xlabel(f"Điểm adapter - điểm base ({primary_metric})"); plt.ylabel("Số câu hỏi")
+    plt.title("Phân bố thay đổi điểm trên ảnh suy thoái")
+    plt.tight_layout(); plt.savefig(visual / "score_delta_histogram.png", dpi=180); plt.close()
+
+    plt.figure(figsize=(5.5, 5.5))
+    plt.scatter(degraded.base_score, degraded.adapter_score, alpha=.65, s=28)
+    plt.plot([0, 1], [0, 1], linestyle="--", color="black", linewidth=1)
+    plt.xlim(-.03, 1.03); plt.ylim(-.03, 1.03)
+    plt.xlabel("Điểm base"); plt.ylabel("Điểm adapter")
+    plt.title("So sánh từng câu hỏi trên ảnh suy thoái")
+    plt.tight_layout(); plt.savefig(visual / "base_vs_adapter_scatter.png", dpi=180); plt.close()
+
+    chosen = pd.concat([
+        degraded[degraded.delta > 0].head(4),
+        degraded[degraded.delta < 0].sort_values("delta").head(4),
+    ], ignore_index=True)
+    if chosen.empty:
+        chosen = degraded.head(6)
+    if not chosen.empty:
+        figure, axes = plt.subplots(len(chosen), 3, figsize=(16, max(4, 4.1 * len(chosen))))
+        axes = np.atleast_2d(axes)
+        for row_index, record in enumerate(chosen.to_dict("records")):
+            for column, (root, title) in enumerate(((clean_root, "Ảnh sạch đối chiếu"),
+                                                    (degraded_root, "Ảnh suy thoái - đầu vào thật"))):
+                axis = axes[row_index, column]; path = _find_image(root, str(record["image_id"]))
+                if path:
+                    with Image.open(path) as image:
+                        axis.imshow(image.convert("RGB"))
+                else:
+                    axis.text(.5, .5, "Không tìm thấy ảnh", ha="center", va="center")
+                axis.set_title(title); axis.axis("off")
+            axis = axes[row_index, 2]; axis.axis("off")
+            heading = {"ADAPTER_SUA_DUNG": "ADAPTER SỬA ĐÚNG", "ADAPTER_LAM_SAI": "ADAPTER LÀM SAI"}.get(
+                record["case"], "KHÔNG ĐỔI")
+            color = {"ADAPTER_SUA_DUNG": "#e8f5e9", "ADAPTER_LAM_SAI": "#ffebee"}.get(record["case"], "#eeeeee")
+            answers = ", ".join(json.loads(record["answers_json"])[:4])
+            message = (f"{heading}\n\nCâu hỏi: {record['question']}\nĐáp án tham chiếu: {answers}\n\n"
+                       f"Base: {record['base_prediction']}\nĐiểm: {record['base_score']:.3f}\n\n"
+                       f"Adapter: {record['adapter_prediction']}\nĐiểm: {record['adapter_score']:.3f}\n\n"
+                       f"Chênh lệch: {record['delta']:+.3f}")
+            axis.text(0, 1, textwrap.fill(message, width=58, replace_whitespace=False), va="top", fontsize=10,
+                      bbox={"boxstyle": "round", "facecolor": color, "alpha": .9})
+        figure.suptitle("Ví dụ định tính — adapter phục hồi feature, không sinh ảnh pixel mới", fontsize=14)
+        figure.tight_layout(rect=[0, 0, 1, .99])
+        figure.savefig(visual / "qualitative_examples.png", dpi=160, bbox_inches="tight"); plt.close(figure)
+
+    summary = {
+        "benchmark": benchmark_name, "primary_metric": primary_metric,
+        "degraded": {"wins": int(counts.iloc[0]), "ties": int(counts.iloc[1]), "losses": int(counts.iloc[2]),
+                     "mean_delta": float(degraded.delta.mean())},
+        "note": "Adapter phục hồi feature ẩn. Vì vậy không có ảnh pixel phục hồi; ảnh suy thoái là đầu vào thật.",
+    }
+    atomic_write_json(destination / "visualization_report.json", summary)
+    (visual / "README.md").write_text(
+        "# Cách đọc biểu đồ\n\n"
+        "- `win_tie_loss.png`: số câu adapter sửa đúng, giữ nguyên hoặc làm sai so với base.\n"
+        "- `score_delta_histogram.png`: phân bố mức tăng/giảm điểm của từng câu.\n"
+        "- `base_vs_adapter_scatter.png`: mỗi chấm là một câu hỏi; chấm phía trên đường chéo là cải thiện.\n"
+        "- `qualitative_examples.png`: ảnh sạch đối chiếu, ảnh suy thoái đầu vào và câu trả lời trước/sau.\n\n"
+        "Phương pháp này phục hồi **feature ẩn trong mô hình**, không phục hồi pixel. Do đó không có cột ảnh "
+        "`restored image`; tác dụng phục hồi được đo bằng feature và câu trả lời VQA.\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
 def evaluate_vqa(*, phase: int, cfg: dict[str, Any], checkpoint: Path, benchmark_manifest: Path,
                  clean_root: Path, degraded_root: Path, destination: Path,
                  base_predictions: Path | None = None, benchmark_name: str = "textvqa") -> dict[str, Any]:
     destination.mkdir(parents=True, exist_ok=True)
     report_path = destination / "evaluation_report.json"
     predictions_path = destination / "predictions.csv"
-    if report_path.is_file() and predictions_path.is_file():
-        return json.loads(report_path.read_text(encoding="utf-8"))
+    scored_path = destination / "scored_predictions.csv"
+    if report_path.is_file() and predictions_path.is_file() and scored_path.is_file():
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        _create_evaluation_visualizations(
+            table=pd.read_csv(scored_path, dtype={"question_id": str, "image_id": str}),
+            destination=destination, clean_root=clean_root, degraded_root=degraded_root,
+            benchmark_name=benchmark_name, primary_metric=report["primary_metric"],
+        )
+        return report
     from qwen_vl_utils import process_vision_info
     from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
@@ -152,7 +278,7 @@ def evaluate_vqa(*, phase: int, cfg: dict[str, Any], checkpoint: Path, benchmark
         official, exact, anls = _score(row["raw_prediction"], json.loads(row["answers_json"]), normalize, benchmark_name)
         scored.append({**row, "official_textvqa": official, "exact_match": exact, "anls": anls})
     table = pd.DataFrame(scored).drop_duplicates(["question_id", "condition", "mode"], keep="last")
-    table.to_csv(destination / "scored_predictions.csv", index=False)
+    table.to_csv(scored_path, index=False)
     metrics = ("official_textvqa", "anls") if benchmark_name == "textvqa" else ("exact_match", "anls")
     primary_metric = "official_textvqa" if benchmark_name == "textvqa" else "anls"
     arms = {f"{condition}_{mode}": {metric: float(part[metric].mean()) for metric in metrics}
@@ -183,4 +309,8 @@ def evaluate_vqa(*, phase: int, cfg: dict[str, Any], checkpoint: Path, benchmark
               "checkpoint": str(checkpoint.resolve()),
               "metric_source": EVAL_URL if benchmark_name == "textvqa" else STVQA_METRIC_URL}
     atomic_write_json(report_path, report)
+    _create_evaluation_visualizations(
+        table=table, destination=destination, clean_root=clean_root, degraded_root=degraded_root,
+        benchmark_name=benchmark_name, primary_metric=primary_metric,
+    )
     return report
