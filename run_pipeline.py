@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Điểm chạy duy nhất cho toàn bộ thí nghiệm Giai đoạn 2–7."""
+"""Điểm chạy duy nhất: chỉ cần `python3.11 run_pipeline.py`."""
 from __future__ import annotations
 
 import os

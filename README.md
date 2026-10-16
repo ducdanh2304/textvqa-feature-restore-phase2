@@ -3,13 +3,19 @@
 Kho mã này chạy toàn bộ nghiên cứu bằng **một tệp Python duy nhất**:
 
 ```bash
-python3.11 run_pipeline.py \
-  --input-root /datastore/dungmt/textvqa/input \
-  --output-root /datastore/dungmt/textvqa/output
+python3.11 run_pipeline.py
 ```
 
 Người chạy không cần sửa YAML, không cần khai báo biến môi trường và không cần chạy `run.sh`.
-Chương trình tự tìm dữ liệu trong `--input-root`, kiểm tra cấu trúc, tải mô hình Qwen, chạy lần lượt Giai đoạn 2–7 và tiếp tục được khi bị ngắt.
+Chương trình tự tải và kiểm tra dữ liệu, tải mô hình Qwen, chạy lần lượt Giai đoạn 2–7 và tiếp tục được khi bị ngắt.
+
+Các vị trí mặc định:
+
+```text
+textvqa-feature-restore-phase2/
+├── data/       ← toàn bộ dataset tự tải vào đây
+└── outputs/    ← toàn bộ kết quả được ghi vào đây
+```
 
 ## 1. Nghiên cứu này làm gì?
 
@@ -62,41 +68,30 @@ git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git
 cd textvqa-feature-restore-phase2
 ```
 
-### Bước 2 — tạo môi trường tự động
+### Bước 2 — chạy
 
 ```bash
-python3.11 run_pipeline.py --help
+python3.11 run_pipeline.py
 ```
 
-Lần đầu, tệp này tự tạo `.venv` và cài đúng thư viện. Những lần sau nó dùng lại môi trường đó.
+Đây là lệnh duy nhất cần chạy. Lần đầu, chương trình sẽ:
 
-### Bước 3A — thuận tiện nhất: tải tự động bằng Kaggle
+1. Tự tạo `.venv` và cài thư viện.
+2. Tự tải bốn dataset Kaggle vào thư mục `data/`.
+3. Tự tải ST-VQA sạch và Qwen từ Hugging Face.
+4. Chạy Giai đoạn 2–7.
+5. Ghi kết quả vào thư mục `outputs/`.
 
-Đăng nhập Kaggle một lần:
+Nếu máy chưa đăng nhập Kaggle, chương trình sẽ in một liên kết. Mở liên kết đó, đăng nhập và nhập mã xác thực vào terminal. Chương trình sẽ tự tải tiếp. Dataset Giai đoạn 1 phải được chia sẻ cho tài khoản Kaggle đang đăng nhập.
 
-```bash
-.venv/bin/kaggle auth login --no-launch-browser
-```
-
-Mở địa chỉ được in ra, đăng nhập, rồi dán mã xác thực vào terminal. Sau đó chạy:
-
-```bash
-python3.11 run_pipeline.py \
-  --download-data \
-  --input-root /datastore/dungmt/textvqa/input \
-  --output-root /datastore/dungmt/textvqa/output
-```
-
-Tùy chọn `--download-data` tự tải và giải nén bốn dataset Kaggle. Chương trình sau đó tự tải snapshot ST-VQA sạch đã khóa từ Hugging Face và chỉ xuất các ảnh cần dùng. Nếu một thư mục đã có dữ liệu, chương trình giữ nguyên thư mục đó.
-
-### Bước 3B — nếu tải bằng trình duyệt
+### Trường hợp đã tải dữ liệu thủ công
 
 1. Mở bốn liên kết Kaggle ở mục 2 và bấm **Download**.
 2. Chuyển bốn tệp ZIP lên máy H200.
-3. Giải nén mỗi ZIP vào một thư mục con bất kỳ bên trong `/datastore/dungmt/textvqa/input`.
+3. Giải nén mỗi ZIP vào một thư mục con bất kỳ bên trong thư mục `data/` của repository.
 
 ```text
-/datastore/dungmt/textvqa/input/
+textvqa-feature-restore-phase2/data/
 ├── phase1/       ← giải nén textvqa-feature-restore-v1 vào đây
 ├── degraded/     ← giải nén data-suy-thoai-text-vqa vào đây
 ├── clean/        ← giải nén dmytruto/textvqa vào đây
@@ -140,42 +135,15 @@ Chương trình ghép ST-VQA sạch bằng `source_row_index`, sau đó đối c
 
 ## 5. Lệnh chạy chính
 
-### Máy có Internet
-
 ```bash
-python3.11 run_pipeline.py \
-  --input-root /datastore/dungmt/textvqa/input \
-  --output-root /datastore/dungmt/textvqa/output
+python3.11 run_pipeline.py
 ```
 
-Qwen được tải tự động từ Hugging Face ở revision đã khóa.
-
-### Máy không có Internet
-
-Chép snapshot đầy đủ của Qwen và thư mục ST-VQA sạch đã materialize lên máy rồi chạy. Thư mục sạch cần đặt tại `input/stvqa_clean_from_huggingface/stvqa_source_v1/images/` kèm `materialization_report.json` ở thư mục cha.
-
-```bash
-python3.11 run_pipeline.py \
-  --input-root /datastore/dungmt/textvqa/input \
-  --output-root /datastore/dungmt/textvqa/output \
-  --model-path /datastore/dungmt/models/Qwen2.5-VL-3B-Instruct \
-  --offline
-```
+Máy của trường có Internet nên Qwen và ST-VQA sạch được tải tự động ở đúng revision đã khóa.
 
 ### Chạy lại sau khi bị ngắt
 
-Chạy lại đúng lệnh cũ. Chương trình giữ feature cache, checkpoint và prediction đã hoàn thành. Không xóa `output` nếu muốn tiếp tục.
-
-### Chỉ chạy tiếp một số giai đoạn
-
-```bash
-python3.11 run_pipeline.py \
-  --input-root /datastore/dungmt/textvqa/input \
-  --output-root /datastore/dungmt/textvqa/output \
-  --phases 4,5,6,7
-```
-
-Chương trình kiểm tra checkpoint giai đoạn trước trước khi chạy tiếp.
+Chạy lại đúng `python3.11 run_pipeline.py`. Chương trình giữ feature cache, checkpoint và prediction đã hoàn thành. Không xóa thư mục `outputs/` nếu muốn tiếp tục.
 
 ## 6. Kết quả nằm ở đâu?
 
@@ -229,11 +197,11 @@ TextVQA dùng Official TextVQA Accuracy làm metric chính. ST-VQA dùng ANLS l�
 
 ### `Không tìm thấy bộ dữ liệu...`
 
-Dataset chưa giải nén đầy đủ hoặc đặt ngoài `--input-root`. Đọc các đường dẫn trong lỗi rồi chuyển cả thư mục dataset vào `--input-root`.
+Dataset chưa tải hoặc giải nén đầy đủ. Chạy lại `python3.11 run_pipeline.py`; dữ liệu đã hoàn thành sẽ được giữ lại.
 
 ### Tìm thấy nhiều vị trí
 
-Cùng một dataset bị giải nén hai lần. Giữ một bản duy nhất trong `--input-root`.
+Cùng một dataset bị giải nén hai lần. Giữ một bản duy nhất trong thư mục `data/`.
 
 ### Kaggle báo không có quyền
 

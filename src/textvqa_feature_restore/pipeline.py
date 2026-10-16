@@ -21,30 +21,48 @@ DATASETS = {
     "stvqa_degraded": "anhthu128/st-vqa-suy-thoi",
 }
 
+# Các giá trị mặc định để người chạy không phải truyền tham số dòng lệnh.
+# Tất cả dữ liệu và kết quả nằm ngay trong thư mục repository.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_INPUT_ROOT = REPOSITORY_ROOT / "data"
+DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "outputs"
+DEFAULT_PHASES = "2,3,4,5,6,7"
+DEFAULT_PHASE7_EPOCHS = 3
+
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="Chạy một lệnh cho thí nghiệm phục hồi feature TextVQA, Giai đoạn 2–7")
-    value.add_argument("--input-root", required=True, help="Thư mục chứa ba dataset đã giải nén")
-    value.add_argument("--output-root", required=True, help="Thư mục nhận toàn bộ kết quả")
+    value.add_argument("--input-root", default=str(DEFAULT_INPUT_ROOT), help=argparse.SUPPRESS)
+    value.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT), help=argparse.SUPPRESS)
     value.add_argument("--model-path", help="Qwen2.5-VL-3B-Instruct cục bộ; bỏ trống để tải từ Hugging Face")
-    value.add_argument("--offline", action="store_true", help="Cấm tải mạng; yêu cầu --model-path")
-    value.add_argument("--download-data", action="store_true", help="Tự tải và giải nén ba dataset bằng tài khoản Kaggle")
-    value.add_argument("--phases", default="2,3,4,5,6,7", help="Các giai đoạn cần chạy, mặc định 2,3,4,5,6,7")
-    value.add_argument("--allow-non-h200", action="store_true", help="Cho phép GPU khác H200 để chạy thử")
-    value.add_argument("--phase7-epochs", type=int, default=3)
+    value.add_argument("--offline", action="store_true", help=argparse.SUPPRESS)
+    value.add_argument("--no-download-data", dest="download_data", action="store_false", help=argparse.SUPPRESS)
+    value.set_defaults(download_data=True)
+    value.add_argument("--phases", default=DEFAULT_PHASES, help=argparse.SUPPRESS)
+    value.add_argument("--allow-non-h200", action="store_true", help=argparse.SUPPRESS)
+    value.add_argument("--phase7-epochs", type=int, default=DEFAULT_PHASE7_EPOCHS, help=argparse.SUPPRESS)
     return value
 
 
 def _download(input_root: Path) -> None:
     input_root.mkdir(parents=True, exist_ok=True)
+    authenticated = False
     for name, slug in DATASETS.items():
         destination = input_root / name
         if destination.is_dir() and any(destination.iterdir()):
             print(f"[DỮ LIỆU] Giữ thư mục đã có: {destination}", flush=True); continue
         destination.mkdir(parents=True, exist_ok=True)
         print(f"[DỮ LIỆU] Đang tải {slug} ...", flush=True)
-        subprocess.run([sys.executable, "-m", "kaggle", "datasets", "download", slug,
-                        "--path", str(destination), "--unzip"], check=True)
+        command = [sys.executable, "-m", "kaggle", "datasets", "download", slug,
+                   "--path", str(destination), "--unzip"]
+        result = subprocess.run(command, check=False)
+        if result.returncode != 0 and not authenticated:
+            print("[KAGGLE] Chưa đăng nhập hoặc chưa có quyền. Hãy mở liên kết được in ra và nhập mã xác thực.", flush=True)
+            subprocess.run([sys.executable, "-m", "kaggle", "auth", "login", "--no-launch-browser"], check=True)
+            authenticated = True
+            result = subprocess.run(command, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(f"Không tải được dataset {slug}. Kiểm tra quyền truy cập Kaggle rồi chạy lại cùng lệnh.")
 
 
 def _phase2(cfg: dict[str, Any], destination: Path) -> dict[str, Any]:
@@ -84,6 +102,9 @@ def _need(path: Path, explanation: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     input_root, output_root = Path(args.input_root).expanduser().resolve(), Path(args.output_root).expanduser().resolve()
+    print(f"[MẶC ĐỊNH] Dữ liệu: {input_root}", flush=True)
+    print(f"[MẶC ĐỊNH] Kết quả: {output_root}", flush=True)
+    print(f"[MẶC ĐỊNH] Giai đoạn: {args.phases}", flush=True)
     if args.download_data: _download(input_root)
     stvqa_manifest = find_stvqa_manifest(input_root)
     ensure_stvqa_clean(input_root, stvqa_manifest, offline=bool(args.offline))
