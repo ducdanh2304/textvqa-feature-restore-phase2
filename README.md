@@ -59,7 +59,7 @@ ST-VQA được giữ làm **benchmark ngoài miền**, không trộn vào 2.000
 
 ## 3. Chuẩn bị máy H200 từ đầu
 
-Yêu cầu: Linux, GPU NVIDIA H200, Python 3.10/3.11, Git và đủ dung lượng cho dữ liệu, Qwen, feature cache.
+Yêu cầu: Linux, GPU NVIDIA H200 (kể cả H200 MIG khoảng 33 GB), Python 3.10/3.11/3.12, Git và đủ dung lượng cho dữ liệu, Qwen, feature cache. Cấu hình hiện tại đã được chỉnh theo máy của trường: Python 3.12, H200 MIG khoảng 33 GB và NVIDIA driver hỗ trợ CUDA 13.0. PyTorch dùng CUDA runtime riêng nên không cần trùng đúng số phiên bản CUDA của driver.
 
 ### Bước 1 — lấy mã nguồn
 
@@ -71,17 +71,21 @@ git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git text
 ### Bước 2 — kích hoạt môi trường và chạy
 
 ```bash
+cd /datastore/dungmt/textvqa
+git pull --ff-only
 source /datastore/dungmt/venv/bin/activate
 python /datastore/dungmt/textvqa/run_all.py
 ```
 
-Đây là lệnh duy nhất cần chạy. Lần đầu, chương trình sẽ:
+Ba dòng trên cập nhật đúng phiên bản mới nhất rồi chạy bằng môi trường có sẵn của máy. Lần đầu, chương trình sẽ:
 
 1. Tự cài thư viện còn thiếu vào `/datastore/dungmt/venv`.
 2. Tự tải bốn dataset Kaggle vào thư mục `data/`.
 3. Tự tải ST-VQA sạch và Qwen từ Hugging Face.
 4. Chạy Giai đoạn 2–7.
 5. Ghi kết quả vào thư mục `outputs/`.
+
+Ngay khi khởi động, chương trình tạo `outputs/bootstrap_status.json`. Tệp này ghi Git commit, Python, đường dẫn output và giai đoạn hiện tại. Sau khi nạp PyTorch, tệp còn ghi tên GPU và dung lượng GPU nhìn thấy. Vì vậy kể cả khi cài thư viện hoặc pipeline lỗi, vẫn có trạng thái để kiểm tra.
 
 Nếu máy chưa đăng nhập Kaggle, chương trình sẽ in một liên kết. Mở liên kết đó, đăng nhập và nhập mã xác thực vào terminal. Chương trình sẽ tự tải tiếp. Dataset Giai đoạn 1 phải được chia sẻ cho tài khoản Kaggle đang đăng nhập.
 

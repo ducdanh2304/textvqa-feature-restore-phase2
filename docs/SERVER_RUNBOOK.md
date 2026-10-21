@@ -6,7 +6,7 @@
 
    ```bash
    mkdir -p "$HOME/textvqa_phase2_download"
-   python3.11 -m zipfile -e \
+   python -m zipfile -e \
      /duong/dan/da-tai/textvqa-feature-restore-v1.zip \
      "$HOME/textvqa_phase2_download"
    mkdir -p "$HOME/textvqa_phase2_data/phase1"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import importlib.util
+import importlib.metadata
 import json
 import subprocess
 import sys
@@ -20,21 +21,33 @@ os.environ.setdefault("USE_FLAX", "0")
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 
 RUNTIME_PACKAGES = {
-    "torch": "torch==2.6.0",
-    "transformers": "transformers==4.57.6",
-    "qwen_vl_utils": "qwen-vl-utils==0.0.14",
-    "accelerate": "accelerate==1.10.1",
-    "huggingface_hub": "huggingface-hub==0.36.0",
-    "numpy": "numpy==2.1.3",
-    "pandas": "pandas==2.2.3",
-    "PIL": "Pillow==11.3.0",
-    "yaml": "PyYAML==6.0.2",
-    "matplotlib": "matplotlib==3.10.3",
-    "tqdm": "tqdm==4.67.1",
-    "rapidfuzz": "rapidfuzz==3.14.1",
-    "kaggle": "kaggle==1.7.4.5",
-    "datasets": "datasets==3.6.0",
+    # module: (distribution, pinned version). Python 3.12 is supported by all pins.
+    "torch": ("torch", "2.6.0"),
+    "transformers": ("transformers", "4.57.6"),
+    "qwen_vl_utils": ("qwen-vl-utils", "0.0.14"),
+    "accelerate": ("accelerate", "1.10.1"),
+    "huggingface_hub": ("huggingface-hub", "0.36.0"),
+    "numpy": ("numpy", "2.1.3"),
+    "pandas": ("pandas", "2.2.3"),
+    "PIL": ("Pillow", "11.3.0"),
+    "yaml": ("PyYAML", "6.0.2"),
+    "matplotlib": ("matplotlib", "3.10.3"),
+    "tqdm": ("tqdm", "4.67.1"),
+    "rapidfuzz": ("rapidfuzz", "3.14.1"),
+    "kaggle": ("kaggle", "1.7.4.5"),
+    "datasets": ("datasets", "3.6.0"),
 }
+
+
+def _git_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return "unknown"
 
 
 def _write_status(stage: str, **extra: object) -> None:
@@ -45,6 +58,7 @@ def _write_status(stage: str, **extra: object) -> None:
         "python": sys.version,
         "executable": sys.executable,
         "repository": str(ROOT),
+        "git_commit": _git_commit(),
         "output_root": str(OUTPUT_ROOT),
         **extra,
     }
@@ -53,9 +67,38 @@ def _write_status(stage: str, **extra: object) -> None:
     temporary.replace(STATUS_PATH)
 
 
-def _missing_packages() -> list[str]:
-    return [requirement for module, requirement in RUNTIME_PACKAGES.items()
-            if importlib.util.find_spec(module) is None]
+def _unsatisfied_packages() -> list[str]:
+    requirements: list[str] = []
+    for module, (distribution, expected) in RUNTIME_PACKAGES.items():
+        try:
+            installed = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            installed = None
+        installed_base = installed.split("+", 1)[0] if installed else None
+        if importlib.util.find_spec(module) is None or installed_base != expected:
+            requirements.append(f"{distribution}=={expected}")
+    return requirements
+
+
+def _server_profile() -> dict[str, object]:
+    import torch
+
+    devices: list[dict[str, object]] = []
+    for index in range(torch.cuda.device_count()):
+        properties = torch.cuda.get_device_properties(index)
+        devices.append({
+            "index": index,
+            "name": properties.name,
+            "memory_gib": round(properties.total_memory / (1024 ** 3), 2),
+            "compute_capability": f"{properties.major}.{properties.minor}",
+        })
+    return {
+        "torch": torch.__version__,
+        "torch_cuda": torch.version.cuda,
+        "cuda_available": torch.cuda.is_available(),
+        "visible_gpu_count": torch.cuda.device_count(),
+        "devices": devices,
+    }
 
 
 def _install_into_active_environment() -> None:
@@ -66,13 +109,13 @@ def _install_into_active_environment() -> None:
         )
     if not ((3, 10) <= sys.version_info[:2] < (3, 13)):
         raise RuntimeError(f"Cần Python 3.10, 3.11 hoặc 3.12; hiện tại là {sys.version.split()[0]}")
-    missing = _missing_packages()
+    missing = _unsatisfied_packages()
     print(f"[MÔI TRƯỜNG] Python: {sys.version.split()[0]} ({sys.executable})", flush=True)
     print(f"[MÔI TRƯỜNG] Môi trường: {sys.prefix}", flush=True)
     print(f"[MÔI TRƯỜNG] Output sẽ nằm tại: {OUTPUT_ROOT}", flush=True)
     _write_status("INSTALLING", missing_packages=missing)
     if missing:
-        print(f"[MÔI TRƯỜNG] Chỉ cài các thư viện còn thiếu: {missing}", flush=True)
+        print(f"[MÔI TRƯỜNG] Cài các thư viện còn thiếu hoặc sai phiên bản: {missing}", flush=True)
         subprocess.run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
                         "--no-input", *missing], check=True)
     # Cài chính repository nhưng không yêu cầu pip giải lại toàn bộ dependency.
@@ -83,17 +126,27 @@ def _install_into_active_environment() -> None:
 
 
 print(f"[KHỞI ĐỘNG] Repository: {ROOT}", flush=True)
+print(f"[KHỞI ĐỘNG] Git commit: {_git_commit()}", flush=True)
 print(f"[KHỞI ĐỘNG] Python: {sys.version.split()[0]} ({sys.executable})", flush=True)
 print(f"[KHỞI ĐỘNG] Kết quả: {OUTPUT_ROOT}", flush=True)
 _write_status("BOOTSTRAP_STARTED")
 
-if _missing_packages() or importlib.util.find_spec("textvqa_feature_restore") is None:
+if _unsatisfied_packages() or importlib.util.find_spec("textvqa_feature_restore") is None:
     _install_into_active_environment()
 
 if __name__ == "__main__":
     try:
         from textvqa_feature_restore.pipeline import main
-        _write_status("PIPELINE_RUNNING")
+        profile = _server_profile()
+        print(f"[PHẦN CỨNG] {json.dumps(profile, ensure_ascii=False)}", flush=True)
+        for device in profile["devices"]:
+            if "H200" in str(device["name"]).upper() and float(device["memory_gib"]) < 80:
+                print(
+                    f"[PHẦN CỨNG] Phát hiện H200 MIG {device['memory_gib']} GiB; "
+                    "cấu hình batch=1 khi trích feature hỗ trợ profile này.",
+                    flush=True,
+                )
+        _write_status("PIPELINE_RUNNING", server_profile=profile)
         exit_code = main([])
         _write_status("COMPLETE", exit_code=exit_code)
         raise SystemExit(exit_code)

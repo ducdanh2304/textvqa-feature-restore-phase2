@@ -19,7 +19,7 @@ done
 
 echo "Repository: ${ROOT}"
 echo "Virtual environment: ${VENV}"
-"${PYTHON_BIN}" -c 'import sys; assert (3,10) <= sys.version_info[:2] < (3,12), sys.version'
+"${PYTHON_BIN}" -c 'import sys; assert (3,10) <= sys.version_info[:2] < (3,13), sys.version'
 "${PYTHON_BIN}" -m venv "${VENV}"
 PY="${VENV}/bin/python"
 
