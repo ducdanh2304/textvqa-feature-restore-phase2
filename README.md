@@ -238,3 +238,23 @@ Kiểm tra không có tiến trình khác chiếm GPU. Cấu hình chính dành 
 ### Xem tiến độ
 
 Mở `pipeline_state.json`, `history.csv` và `predictions.csv`. Các tệp này được cập nhật trong quá trình chạy.
+
+## 9. Đánh giá nhanh checkpoint Phase 2 trên Kaggle T4 x2
+
+Notebook [`notebooks/stvqa_phase3_t4x2.ipynb`](notebooks/stvqa_phase3_t4x2.ipynb) đánh giá checkpoint đã huấn luyện trên 500 câu ST-VQA cố định. Notebook không huấn luyện lại adapter.
+
+Trước khi chạy:
+
+1. Chọn accelerator **GPU T4 x2** và bật Internet.
+2. Add Input dataset `anhthu128/st-vqa-suy-thoi`.
+3. Add Input một dataset chứa đúng một file `best_adapter.pt`.
+4. Chạy lần lượt toàn bộ cell.
+
+Notebook đánh giá `clean/degraded × base/adapter` và xuất:
+
+- ANLS làm metric chính;
+- Official VQA Accuracy, Exact Match, BLEU-1, BLEU-2, BLEU-3 và BLEU-4 làm metric phụ;
+- bootstrap CI 95% và win/tie/loss theo từng metric;
+- câu trả lời và điểm của từng câu;
+- biểu đồ tổng hợp và ví dụ adapter sửa đúng/làm sai;
+- `/kaggle/working/stvqa_phase3_evaluation.zip` để tải hoặc lưu thành Kaggle Dataset.
