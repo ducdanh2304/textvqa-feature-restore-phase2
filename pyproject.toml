@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "textvqa-feature-restore"
 version = "0.2.0"
 description = "Reproducible Phase-2 frozen-feature caching and residual-adapter training for Scene Text VQA"
-requires-python = ">=3.10,<3.12"
+requires-python = ">=3.10,<3.13"
 license = {text = "MIT"}
 dependencies = [
   "torch==2.6.0",
