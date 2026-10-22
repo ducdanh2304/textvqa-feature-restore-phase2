@@ -1,14 +1,16 @@
 # Phục hồi đặc trưng ảnh suy thoái cho TextVQA — Giai đoạn 2 đến 7
 
-Kho mã này chạy toàn bộ nghiên cứu bằng **một tệp Python duy nhất**:
+Kho mã này chạy toàn bộ nghiên cứu bằng **một tệp Python duy nhất** sau khi cài môi trường:
 
 ```bash
-source /datastore/dungmt/venv/bin/activate
-python /datastore/dungmt/textvqa/run_all.py
+python -m pip install -r requirements.txt
+python run_all.py
 ```
 
 Người chạy không cần sửa YAML, không cần khai báo biến môi trường và không cần chạy `run.sh`.
-Chương trình tự tải và kiểm tra dữ liệu, tải mô hình Qwen, chạy lần lượt Giai đoạn 2–7 và tiếp tục được khi bị ngắt.
+Phiên bản Python và toàn bộ phiên bản thư viện nằm trong `requirements.txt`; `run_all.py` không tự cài package.
+Chương trình tự dò thư mục cha chứa dữ liệu, tải phần còn thiếu, kiểm tra dữ liệu, tải mô hình Qwen,
+chạy lần lượt Giai đoạn 2–7 và tiếp tục được khi bị ngắt.
 
 Các vị trí mặc định:
 
@@ -64,26 +66,30 @@ Yêu cầu: Linux, GPU NVIDIA H200 (kể cả H200 MIG khoảng 33 GB), Python 3
 ### Bước 1 — lấy mã nguồn
 
 ```bash
-cd /datastore/dungmt
-git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git textvqa
+git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git
+cd textvqa-feature-restore-phase2
 ```
 
-### Bước 2 — kích hoạt môi trường và chạy
+### Bước 2 — kích hoạt môi trường và cài thư viện
 
 ```bash
-cd /datastore/dungmt/textvqa
-git pull --ff-only
-source /datastore/dungmt/venv/bin/activate
-python /datastore/dungmt/textvqa/run_all.py
+source /đường/dẫn/venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-Ba dòng trên cập nhật đúng phiên bản mới nhất rồi chạy bằng môi trường có sẵn của máy. Lần đầu, chương trình sẽ:
+### Bước 3 — chạy toàn bộ thí nghiệm
 
-1. Tự cài thư viện còn thiếu vào `/datastore/dungmt/venv`.
-2. Tự tải bốn dataset Kaggle vào thư mục `data/`.
-3. Tự tải ST-VQA sạch và Qwen từ Hugging Face.
-4. Chạy Giai đoạn 2–7.
-5. Ghi kết quả vào thư mục `outputs/`.
+```bash
+python run_all.py
+```
+
+Lần đầu, chương trình sẽ:
+
+1. Dò dataset từ `data/` cạnh repository, `data/`, `input/`, `datasets/` ở thư mục cha;
+   nếu chưa có thì tải bốn dataset Kaggle vào `data/` cạnh repository.
+2. Tự tải ST-VQA sạch và Qwen từ Hugging Face.
+3. Chạy Giai đoạn 2–7.
+4. Ghi kết quả vào `outputs/` cạnh `run_all.py`.
 
 Ngay khi khởi động, chương trình tạo `outputs/bootstrap_status.json`. Tệp này ghi Git commit, Python, đường dẫn output và giai đoạn hiện tại. Sau khi nạp PyTorch, tệp còn ghi tên GPU và dung lượng GPU nhìn thấy. Vì vậy kể cả khi cài thư viện hoặc pipeline lỗi, vẫn có trạng thái để kiểm tra.
 
@@ -141,8 +147,7 @@ Chương trình ghép ST-VQA sạch bằng `source_row_index`, sau đó đối c
 ## 5. Lệnh chạy chính
 
 ```bash
-source /datastore/dungmt/venv/bin/activate
-python /datastore/dungmt/textvqa/run_all.py
+python run_all.py
 ```
 
 Máy của trường có Internet nên Qwen và ST-VQA sạch được tải tự động ở đúng revision đã khóa.
@@ -225,7 +230,7 @@ Nghiên cứu phục hồi feature ẩn nên không có ảnh pixel “đã ph�
 
 ### `Không tìm thấy bộ dữ liệu...`
 
-Dataset chưa tải hoặc giải nén đầy đủ. Chạy lại `python /datastore/dungmt/textvqa/run_all.py`; dữ liệu đã hoàn thành sẽ được giữ lại.
+Dataset chưa tải hoặc giải nén đầy đủ. Chạy lại `python run_all.py`; dữ liệu đã hoàn thành sẽ được giữ lại.
 
 ### Tìm thấy nhiều vị trí
 

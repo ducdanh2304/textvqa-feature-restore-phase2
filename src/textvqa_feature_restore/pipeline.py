@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import pandas as pd
 
 from .config import load_config, write_resolved_config
 from .input_discovery import describe_inputs, discover_inputs, ensure_stvqa_clean, find_stvqa_manifest
@@ -49,8 +50,9 @@ def _download(input_root: Path) -> None:
     authenticated = False
     for name, slug in DATASETS.items():
         destination = input_root / name
-        if destination.is_dir() and any(destination.iterdir()):
-            print(f"[DỮ LIỆU] Giữ thư mục đã có: {destination}", flush=True); continue
+        existing = _find_existing_dataset(input_root, name)
+        if existing is not None:
+            print(f"[DỮ LIỆU] Giữ dataset đã có: {existing}", flush=True); continue
         destination.mkdir(parents=True, exist_ok=True)
         print(f"[DỮ LIỆU] Đang tải {slug} ...", flush=True)
         command = [sys.executable, "-m", "kaggle", "datasets", "download", slug,
@@ -63,6 +65,40 @@ def _download(input_root: Path) -> None:
             result = subprocess.run(command, check=False)
         if result.returncode != 0:
             raise RuntimeError(f"Không tải được dataset {slug}. Kiểm tra quyền truy cập Kaggle rồi chạy lại cùng lệnh.")
+
+
+def _find_existing_dataset(input_root: Path, name: str) -> Path | None:
+    """Tìm dataset theo cấu trúc bên trong, không phụ thuộc tên hay số tầng thư mục."""
+    if name == "phase1":
+        for manifest in input_root.rglob("train_manifest.csv"):
+            root = manifest.parent
+            required = [root / "dev_manifest.csv", root / "data/train/clean",
+                        root / "data/train/degraded", root / "data/dev/clean",
+                        root / "data/dev/degraded"]
+            if all(path.exists() for path in required):
+                return root.resolve()
+        return None
+    if name in {"degraded", "stvqa_degraded"}:
+        wants_stvqa = name == "stvqa_degraded"
+        for manifest in input_root.rglob("final_main_manifest.csv"):
+            if not (manifest.parent / "images/realistic_mix/L2").is_dir():
+                continue
+            try:
+                columns = set(pd.read_csv(manifest, nrows=1).columns)
+            except Exception:
+                continue
+            is_stvqa = {"source_row_index", "source_split"}.issubset(columns)
+            if is_stvqa == wants_stvqa:
+                return manifest.parent.resolve()
+        return None
+    if name == "clean":
+        for directory in input_root.rglob("train_images"):
+            has_image = any(next(directory.glob(pattern), None) is not None
+                            for pattern in ("*.jpg", "*.jpeg", "*.png"))
+            if directory.is_dir() and has_image:
+                return directory.resolve()
+        return None
+    raise ValueError(f"Tên dataset không được hỗ trợ: {name}")
 
 
 def _phase2(cfg: dict[str, Any], destination: Path) -> dict[str, Any]:
