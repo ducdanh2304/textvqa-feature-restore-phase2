@@ -169,6 +169,7 @@ def main() -> int:
     return run_pipeline([
         "--input-root", str(input_root),
         "--output-root", str(OUTPUT_ROOT),
+        "--no-download-data",
     ])
 
 

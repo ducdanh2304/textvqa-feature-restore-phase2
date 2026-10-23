@@ -9,7 +9,7 @@ python run_all.py
 
 Người chạy không cần sửa YAML, không cần khai báo biến môi trường và không cần chạy `run.sh`.
 Phiên bản Python và toàn bộ phiên bản thư viện nằm trong `requirements.txt`; `run_all.py` không tự cài package.
-Chương trình tự dò thư mục cha chứa dữ liệu, tải phần còn thiếu, kiểm tra dữ liệu, tải mô hình Qwen,
+Chương trình tự dò thư mục cha chứa dữ liệu, kiểm tra dữ liệu, tải mô hình Qwen,
 chạy lần lượt Giai đoạn 2–7 và tiếp tục được khi bị ngắt.
 
 Các vị trí mặc định:
@@ -85,15 +85,15 @@ python run_all.py
 
 Lần đầu, chương trình sẽ:
 
-1. Dò dataset từ `data/` cạnh repository, `data/`, `input/`, `datasets/` ở thư mục cha;
-   nếu chưa có thì tải bốn dataset Kaggle vào `data/` cạnh repository.
-2. Tự tải ST-VQA sạch và Qwen từ Hugging Face.
-3. Chạy Giai đoạn 2–7.
-4. Ghi kết quả vào `outputs/` cạnh `run_all.py`.
+1. Dò dataset từ `data/` cạnh repository, `data/`, `input/`, `datasets/` ở thư mục cha.
+2. Nếu thiếu Dataset Kaggle, dừng và báo chính xác thành phần cần chép lên server; chương trình không đăng nhập hoặc tự tải Kaggle.
+3. Tự tải ST-VQA sạch và Qwen từ Hugging Face.
+4. Chạy Giai đoạn 2–7.
+5. Ghi kết quả vào `outputs/` cạnh `run_all.py`.
 
 Ngay khi khởi động, chương trình tạo `outputs/bootstrap_status.json`. Tệp này ghi Git commit, Python, đường dẫn output và giai đoạn hiện tại. Sau khi nạp PyTorch, tệp còn ghi tên GPU và dung lượng GPU nhìn thấy. Vì vậy kể cả khi cài thư viện hoặc pipeline lỗi, vẫn có trạng thái để kiểm tra.
 
-Nếu máy chưa đăng nhập Kaggle, chương trình sẽ in một liên kết. Mở liên kết đó, đăng nhập và nhập mã xác thực vào terminal. Chương trình sẽ tự tải tiếp. Dataset Giai đoạn 1 phải được chia sẻ cho tài khoản Kaggle đang đăng nhập.
+Dataset Giai đoạn 1 phải được tải trước bởi tài khoản đã được chia sẻ quyền, sau đó chép và giải nén lên server cùng các Dataset còn lại.
 
 ### Trường hợp đã tải dữ liệu thủ công
 
