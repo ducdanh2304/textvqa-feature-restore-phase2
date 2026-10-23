@@ -13,6 +13,7 @@ import subprocess
 import sys
 import traceback
 from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent
@@ -24,6 +25,11 @@ os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_FLAX", "0")
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# Giữ thông báo tiếng Việt đọc được khi chạy từ PowerShell/cmd trên Windows.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def _git_commit() -> str:
@@ -117,6 +123,30 @@ def _check_runtime() -> dict[str, object]:
         )
     if not SOURCE_ROOT.is_dir():
         raise FileNotFoundError(f"Thiếu mã nguồn package: {SOURCE_ROOT}")
+
+    requirements_path = REPOSITORY_ROOT / "requirements.txt"
+    mismatches: list[str] = []
+    for raw_line in requirements_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or "==" not in line:
+            continue
+        package, required = (part.strip() for part in line.split("==", 1))
+        try:
+            installed = version(package)
+        except PackageNotFoundError:
+            mismatches.append(f"{package}: chưa cài (cần {required})")
+            continue
+        # Chấp nhận hậu tố CUDA/local build, ví dụ torch 2.6.0+cu124.
+        if installed.split("+", 1)[0] != required.split("+", 1)[0]:
+            mismatches.append(f"{package}: đang có {installed}, cần {required}")
+    if mismatches:
+        details = "\n  - ".join(mismatches)
+        raise RuntimeError(
+            "Môi trường không khớp requirements.txt:\n  - " + details + "\n"
+            "Hãy kích hoạt đúng venv rồi chạy: "
+            f"{sys.executable} -m pip install -r {requirements_path}"
+        )
+
     sys.path.insert(0, str(SOURCE_ROOT))
     try:
         import torch
