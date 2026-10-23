@@ -195,11 +195,11 @@ def main() -> int:
 
     from textvqa_feature_restore.pipeline import main as run_pipeline
 
-    # Chỉ hoàn chỉnh đường dẫn từ thư mục cha đã dò; không đổi phase hoặc tham số thí nghiệm.
+    # Dataset Kaggle công khai còn thiếu được tải ẩn danh vào data/ bởi pipeline.
+    # Không đổi phase hoặc tham số thí nghiệm.
     return run_pipeline([
         "--input-root", str(input_root),
         "--output-root", str(OUTPUT_ROOT),
-        "--no-download-data",
     ])
 
 

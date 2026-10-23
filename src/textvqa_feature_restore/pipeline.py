@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -46,25 +45,29 @@ def parser() -> argparse.ArgumentParser:
 
 
 def _download(input_root: Path) -> None:
+    """Tải ẩn danh các Kaggle Dataset công khai còn thiếu vào thư mục chuẩn."""
+    import kagglehub
+
     input_root.mkdir(parents=True, exist_ok=True)
-    authenticated = False
     for name, slug in DATASETS.items():
         destination = input_root / name
         existing = _find_existing_dataset(input_root, name)
         if existing is not None:
-            print(f"[DỮ LIỆU] Giữ dataset đã có: {existing}", flush=True); continue
+            print(f"[DỮ LIỆU] Giữ dataset đã có: {existing}", flush=True)
+            continue
         destination.mkdir(parents=True, exist_ok=True)
-        print(f"[DỮ LIỆU] Đang tải {slug} ...", flush=True)
-        command = [sys.executable, "-m", "kaggle", "datasets", "download", slug,
-                   "--path", str(destination), "--unzip"]
-        result = subprocess.run(command, check=False)
-        if result.returncode != 0 and not authenticated:
-            print("[KAGGLE] Chưa đăng nhập hoặc chưa có quyền. Hãy mở liên kết được in ra và nhập mã xác thực.", flush=True)
-            subprocess.run([sys.executable, "-m", "kaggle", "auth", "login", "--no-launch-browser"], check=True)
-            authenticated = True
-            result = subprocess.run(command, check=False)
-        if result.returncode != 0:
-            raise RuntimeError(f"Không tải được dataset {slug}. Kiểm tra quyền truy cập Kaggle rồi chạy lại cùng lệnh.")
+        print(f"[DỮ LIỆU] Tải công khai {slug} -> {destination}", flush=True)
+        try:
+            kagglehub.dataset_download(slug, output_dir=str(destination))
+        except Exception as error:
+            raise RuntimeError(
+                f"Không tải được Kaggle Dataset công khai {slug}. "
+                "Kiểm tra Internet và bảo đảm Dataset đang ở chế độ Public."
+            ) from error
+        if _find_existing_dataset(input_root, name) is None:
+            raise RuntimeError(
+                f"Đã tải {slug} nhưng cấu trúc dữ liệu không hợp lệ tại {destination}."
+            )
 
 
 def _find_existing_dataset(input_root: Path, name: str) -> Path | None:
