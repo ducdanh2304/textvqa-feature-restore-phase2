@@ -58,7 +58,14 @@ def _download(input_root: Path) -> None:
         destination.mkdir(parents=True, exist_ok=True)
         print(f"[DỮ LIỆU] Tải công khai {slug} -> {destination}", flush=True)
         try:
-            kagglehub.dataset_download(slug, output_dir=str(destination))
+            # Nếu lượt trước bị ngắt, output_dir có thể chứa file tải dở.
+            # Chỉ đi tới đây khi cấu trúc dataset chưa hợp lệ, nên cho phép
+            # KaggleHub thay phần tải dở. Dataset hoàn chỉnh đã được skip ở trên.
+            kagglehub.dataset_download(
+                slug,
+                output_dir=str(destination),
+                force_download=True,
+            )
         except Exception as error:
             raise RuntimeError(
                 f"Không tải được Kaggle Dataset công khai {slug}. "

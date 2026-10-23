@@ -27,7 +27,8 @@ def _materialize(destination):
 def test_public_kaggle_download_uses_fixed_directories_without_credentials(tmp_path, monkeypatch):
     calls = []
 
-    def dataset_download(handle, *, output_dir):
+    def dataset_download(handle, *, output_dir, force_download):
+        assert force_download is True
         destination = tmp_path / output_dir.split(str(tmp_path))[-1].lstrip("/\\")
         calls.append((handle, destination.name))
         _materialize(destination)
