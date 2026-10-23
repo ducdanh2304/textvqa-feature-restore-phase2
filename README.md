@@ -34,7 +34,6 @@ Không đổi tên file bên trong Dataset và không sửa manifest CSV.
 ```bash
 git clone https://github.com/ducdanh2304/textvqa-feature-restore-phase2.git
 cd textvqa-feature-restore-phase2
-source /duong/dan/venv/bin/activate
 python -m pip install -r requirements.txt
 python run_all.py
 ```
@@ -70,6 +69,7 @@ Xem `outputs/final_summary.json` để đọc kết quả tổng hợp. Mỗi ph
 ## 5. Khi chương trình báo lỗi
 
 - `Dataset ... Public`: mở trang Dataset trên Kaggle, vào **Settings** và chuyển sang Public.
-- `Môi trường không khớp requirements.txt`: kích hoạt đúng venv rồi chạy lại `python -m pip install -r requirements.txt`.
+- `Môi trường không khớp requirements.txt`: cài lại đúng môi trường Python rồi chạy `python -m pip install -r requirements.txt`.
 - Thiếu Internet: máy chủ phải truy cập được Kaggle và Hugging Face trong lần chạy đầu.
 - Hết GPU memory: kiểm tra tiến trình khác đang sử dụng GPU.
+
